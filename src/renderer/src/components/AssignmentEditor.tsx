@@ -41,11 +41,13 @@ const AssignmentForm: React.FC<{
     onSave: () => void;
     onCancel: () => void;
     getAccessToken: () => Promise<string>;
-}> = ({ relationshipId, existingAssignment, onSave, onCancel, getAccessToken }) => {
+    allowedRoleIds?: string[];
+}> = ({ relationshipId, existingAssignment, onSave, onCancel, getAccessToken, allowedRoleIds }) => {
     const [securityGroupId, setSecurityGroupId] = useState(existingAssignment?.accessContainer.accessContainerId || '');
     const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>(existingAssignment?.accessDetails.unifiedRoles.map(r => r.roleDefinitionId) || []);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [templateWarning, setTemplateWarning] = useState<string | null>(null);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -79,7 +81,25 @@ const AssignmentForm: React.FC<{
     const applyTemplate = (template: 'basic' | 'advanced' | 'expert') => {
         const selectedTemplate = GROUP_TEMPLATES[template];
         setSecurityGroupId(selectedTemplate.groupId);
-        setSelectedRoleIds(selectedTemplate.roleIds);
+
+        let validRoles = selectedTemplate.roleIds;
+        let droppedRoleIds: string[] = [];
+
+        if (allowedRoleIds) {
+            validRoles = selectedTemplate.roleIds.filter(id => allowedRoleIds.includes(id));
+            droppedRoleIds = selectedTemplate.roleIds.filter(id => !allowedRoleIds.includes(id));
+        }
+
+        setSelectedRoleIds(validRoles);
+
+        if (droppedRoleIds.length > 0) {
+            const droppedNames = droppedRoleIds
+                .map(id => AZURE_AD_ROLES.find(r => r.id === id)?.displayName || id)
+                .join(', ');
+            setTemplateWarning(`The following roles from the ${template} template were not applied because they are not available in this relationship: ${droppedNames}.`);
+        } else {
+            setTemplateWarning(null);
+        }
     };
 
     return (
@@ -101,11 +121,18 @@ const AssignmentForm: React.FC<{
                 />
             </div>
 
-            <div className="flex items-center space-x-2">
-                <span className="text-sm font-medium text-gray-700">Apply Template:</span>
-                <button type="button" onClick={() => applyTemplate('basic')} className="px-2 py-1 text-xs font-semibold text-white bg-blue-500 rounded-full hover:bg-blue-600">Basic</button>
-                <button type="button" onClick={() => applyTemplate('advanced')} className="px-2 py-1 text-xs font-semibold text-white bg-purple-500 rounded-full hover:bg-purple-600">Advanced</button>
-                <button type="button" onClick={() => applyTemplate('expert')} className="px-2 py-1 text-xs font-semibold text-white bg-red-500 rounded-full hover:bg-red-600">Expert</button>
+            <div className="flex flex-col space-y-2">
+                <div className="flex items-center space-x-2">
+                    <span className="text-sm font-medium text-gray-700">Apply Template:</span>
+                    <button type="button" onClick={() => applyTemplate('basic')} className="px-2 py-1 text-xs font-semibold text-white bg-blue-500 rounded-full hover:bg-blue-600">Basic</button>
+                    <button type="button" onClick={() => applyTemplate('advanced')} className="px-2 py-1 text-xs font-semibold text-white bg-purple-500 rounded-full hover:bg-purple-600">Advanced</button>
+                    <button type="button" onClick={() => applyTemplate('expert')} className="px-2 py-1 text-xs font-semibold text-white bg-red-500 rounded-full hover:bg-red-600">Expert</button>
+                </div>
+                {templateWarning && (
+                    <div className="p-2 bg-yellow-50 text-yellow-800 text-xs border border-yellow-200 rounded">
+                        <strong>Note:</strong> {templateWarning}
+                    </div>
+                )}
             </div>
 
             <div>
@@ -116,6 +143,7 @@ const AssignmentForm: React.FC<{
                     userDefaultRoles={null}
                     onSaveDefaults={async () => {}}
                     onResetDefaults={async () => {}}
+                    allowedRoleIds={allowedRoleIds}
                 />
             </div>
             {error && <p className="text-sm text-red-600">{error}</p>}
@@ -145,6 +173,12 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
     const [expandedAssignmentId, setExpandedAssignmentId] = useState<string | null>(null);
 
     const roleMap = useMemo(() => new Map<string, UnifiedRole>(AZURE_AD_ROLES.map(role => [role.id, role])), []);
+
+    // Calculate allowed roles from the relationship details
+    const allowedRoleIds = useMemo(() => {
+        if (!relationship?.accessDetails?.unifiedRoles) return undefined;
+        return relationship.accessDetails.unifiedRoles.map(r => r.roleDefinitionId);
+    }, [relationship]);
 
     const fetchAssignments = useCallback(async () => {
         if (!relationship) return;
@@ -301,6 +335,7 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
                             onSave={handleSave}
                             onCancel={handleCancel}
                             getAccessToken={getAccessToken}
+                            allowedRoleIds={allowedRoleIds}
                         />
                     )}
 
@@ -315,6 +350,7 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
                                             onSave={handleSave}
                                             onCancel={handleCancel}
                                             getAccessToken={getAccessToken}
+                                            allowedRoleIds={allowedRoleIds}
                                         />
                                     </li>
                                 ) : (
