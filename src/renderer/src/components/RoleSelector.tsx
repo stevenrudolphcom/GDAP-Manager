@@ -9,6 +9,7 @@ interface RoleSelectorProps {
     userDefaultRoles: string[] | null;
     onSaveDefaults: (ids: string[]) => Promise<void>;
     onResetDefaults: () => Promise<void>;
+    allowedRoleIds?: string[];
 }
 
 const RoleSelector: React.FC<RoleSelectorProps> = ({ 
@@ -16,13 +17,26 @@ const RoleSelector: React.FC<RoleSelectorProps> = ({
     onSelectedRoleIdsChange, 
     userDefaultRoles, 
     onSaveDefaults, 
-    onResetDefaults 
+    onResetDefaults,
+    allowedRoleIds
 }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [useDefault, setUseDefault] = useState(true);
     const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
     
-    const currentDefaults = userDefaultRoles || DEFAULT_ROLE_IDS;
+    // Helper to check if a specific role is allowed for selection
+    const isRoleAllowed = (roleId: string) => {
+        if (!allowedRoleIds) return true;
+        return allowedRoleIds.includes(roleId);
+    };
+
+    const currentDefaults = useMemo(() => {
+        // Filter defaults to ensure we don't try to select unavailable roles by default
+        const baseDefaults = userDefaultRoles || DEFAULT_ROLE_IDS;
+        if (!allowedRoleIds) return baseDefaults;
+        return baseDefaults.filter(id => allowedRoleIds.includes(id));
+    }, [userDefaultRoles, allowedRoleIds]);
+
     const defaultLabel = userDefaultRoles ? 'Use My Saved Defaults' : 'Use Default Roles (Recommended)';
     
     // Sync the useDefault state if the selected roles match the current defaults
@@ -35,6 +49,8 @@ const RoleSelector: React.FC<RoleSelectorProps> = ({
     }, [selectedRoleIds, currentDefaults]);
 
     const handleRoleToggle = (roleId: string) => {
+        if (!isRoleAllowed(roleId)) return;
+
         const newSelectedIds = selectedRoleIds.includes(roleId)
             ? selectedRoleIds.filter(id => id !== roleId)
             : [...selectedRoleIds, roleId];
@@ -66,7 +82,23 @@ const RoleSelector: React.FC<RoleSelectorProps> = ({
         );
     }, [searchTerm]);
 
-    const selectAll = () => onSelectedRoleIdsChange(AZURE_AD_ROLES.map(r => r.id));
+    // Only select roles that are visible (filtered) AND allowed
+    const selectAll = () => {
+        const rolesToSelect = filteredRoles
+            .map(r => r.id)
+            .filter(id => isRoleAllowed(id));
+        
+        if (searchTerm) {
+            const visibleAllowed = filteredRoles.map(r => r.id).filter(id => isRoleAllowed(id));
+            // Merge with existing
+            const combined = Array.from(new Set([...selectedRoleIds, ...visibleAllowed]));
+            onSelectedRoleIdsChange(combined);
+        } else {
+             const allAllowed = AZURE_AD_ROLES.map(r => r.id).filter(id => isRoleAllowed(id));
+             onSelectedRoleIdsChange(allAllowed);
+        }
+    };
+
     const deselectAll = () => onSelectedRoleIdsChange([]);
     
     const renderSaveButtonContent = () => {
@@ -130,24 +162,30 @@ const RoleSelector: React.FC<RoleSelectorProps> = ({
                     </div>
 
                     <div className="max-h-60 overflow-y-auto pr-2 space-y-3">
-                        {filteredRoles.map(role => (
-                            <div key={role.id} className="relative flex items-start p-3 rounded-md hover:bg-gray-50 transition-colors">
-                                <div className="flex items-center h-5">
-                                    <input
-                                        id={`role-${role.id}`}
-                                        name={`role-${role.id}`}
-                                        type="checkbox"
-                                        checked={selectedRoleIds.includes(role.id)}
-                                        onChange={() => handleRoleToggle(role.id)}
-                                        className="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
-                                    />
+                        {filteredRoles.map(role => {
+                            const allowed = isRoleAllowed(role.id);
+                            return (
+                                <div key={role.id} className={`relative flex items-start p-3 rounded-md transition-colors ${allowed ? 'hover:bg-gray-50' : 'opacity-50 cursor-not-allowed bg-gray-50'}`} title={!allowed ? "This role is not available in the current relationship." : undefined}>
+                                    <div className="flex items-center h-5">
+                                        <input
+                                            id={`role-${role.id}`}
+                                            name={`role-${role.id}`}
+                                            type="checkbox"
+                                            checked={selectedRoleIds.includes(role.id)}
+                                            onChange={() => handleRoleToggle(role.id)}
+                                            disabled={!allowed}
+                                            className="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 disabled:text-gray-400"
+                                        />
+                                    </div>
+                                    <div className="ml-3 text-sm">
+                                        <label htmlFor={`role-${role.id}`} className={`font-medium ${allowed ? 'text-gray-900 cursor-pointer' : 'text-gray-500 cursor-not-allowed'}`}>
+                                            {role.displayName} { !allowed && <span className="text-xs text-orange-600 ml-2">(Unavailable)</span>}
+                                        </label>
+                                        <p className="text-gray-500">{role.description}</p>
+                                    </div>
                                 </div>
-                                <div className="ml-3 text-sm">
-                                    <label htmlFor={`role-${role.id}`} className="font-medium text-gray-900 cursor-pointer">{role.displayName}</label>
-                                    <p className="text-gray-500">{role.description}</p>
-                                </div>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
                     <div className="mt-4 pt-4 border-t border-gray-200 flex justify-end">
                         <button 
