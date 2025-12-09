@@ -27,6 +27,11 @@ export interface DelegatedAdminRelationship {
         tenantId: string;
         displayName: string;
     };
+    accessDetails?: {
+        unifiedRoles: {
+            roleDefinitionId: string;
+        }[];
+    };
     status: 'pending' | 'active' | 'terminating' | 'terminated' | 'expired' | 'approvalPending' | 'approved';
     createdDateTime: string;
     lastModifiedDateTime: string;
@@ -49,4 +54,5 @@ export interface DelegatedAdminAccessAssignment {
     };
     createdDateTime: string;
     lastModifiedDateTime: string;
+}
 }
