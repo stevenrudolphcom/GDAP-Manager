@@ -5,6 +5,9 @@ This app runs with delegated user permissions and needs that the user has Admin 
 
 PLEASE NOTE: This app is only tested on Windows, but should run and build package on Mac and Linux too, but Mac and Linux has not been tested!
 
+## Changelog:
+9.12.2025 When selecting roles for groups in a relationship, only eligible, available roles in the relationship are selectable.
+
 ## IMPORTANT: Azure App Registration Setup
 
 Before you can run this application, you **MUST** configure your Azure AD App Registration correctly.
