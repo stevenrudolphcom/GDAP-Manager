@@ -1,6 +1,6 @@
 {
   "name": "GDAP-Manager",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "A desktop application to create Microsoft 365 GDAP requests, powered by Vite + Electron.",
   "main": "out/main/index.js",
   "scripts": {
@@ -36,7 +36,7 @@
     "vite": "^7.1.12"
   },
   "build": {
-    "appId": "com.gdapmanager",
+    "appId": "com.gdap.requestcreator",
     "productName": "GDAP Manager",
     "directories": {
       "output": "release"
