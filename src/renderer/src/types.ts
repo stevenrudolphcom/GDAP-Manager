@@ -19,7 +19,9 @@ export interface GraphApiGDAPRequest {
     };
 }
 
+// FIX: Added missing @odata.etag and autoExtendDuration properties to ensure type safety in components that manage relationship lifecycle.
 export interface DelegatedAdminRelationship {
+    '@odata.etag'?: string;
     id: string;
     displayName: string;
     duration: string;
@@ -36,6 +38,7 @@ export interface DelegatedAdminRelationship {
     createdDateTime: string;
     lastModifiedDateTime: string;
     endDateTime: string;
+    autoExtendDuration?: string | null;
 }
 
 export interface DelegatedAdminAccessAssignment {
@@ -54,5 +57,4 @@ export interface DelegatedAdminAccessAssignment {
     };
     createdDateTime: string;
     lastModifiedDateTime: string;
-}
 }
