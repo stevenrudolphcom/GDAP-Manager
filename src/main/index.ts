@@ -93,7 +93,7 @@ async function setupMsal() {
   const persistence = await PersistenceCreator.createPersistence({
     cachePath,
     dataProtectionScope: DataProtectionScope.CurrentUser,
-    serviceName: 'com.netox.gdapcreator',
+    serviceName: 'com.gdap.requestcreator',
     accountName: 'msal-cache',
   });
 
