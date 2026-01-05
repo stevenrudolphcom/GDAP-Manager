@@ -1,8 +1,9 @@
 import { UnifiedRole } from './types';
+import { APP_CONFIG } from '../../appConfig';
 
 /**
- * Set of Microsoft Entra built-in roles
- * with unified role definition IDs from Microsoft Learn.
+ * Comprehensive set of Microsoft Entra built-in roles (subset you listed),
+ * with correct unified role definition IDs from Microsoft Learn.
  * Source: https://learn.microsoft.com/entra/identity/role-based-access-control/permissions-reference
  */
 export const AZURE_AD_ROLES: UnifiedRole[] = [
@@ -67,95 +68,24 @@ export const AZURE_AD_ROLES: UnifiedRole[] = [
 ];
 
 /**
- * Default roles to apply if user doesn’t customise selection.
+ * Default role IDs for the creation form, now centralized in APP_CONFIG.
  */
-export const DEFAULT_ROLE_IDS: string[] = [
-      'fdd7a751-b60b-444a-984c-02652fe8fa1c', // Groups Administrator
-      'fe930be7-5e62-47db-91af-98c3a49a38b1', // User Administrator
-      'f2ef992c-3afb-46b9-b7cf-a126ee74c451', // Global Reader
-      '9b895d92-2cd3-44c7-9d02-a6ac2d5ea5c3', // Application Administrator
-      'c4e39bd9-1100-46d3-8c65-fb160da0071f', // Authentication Administrator
-      '8329153b-31d0-4727-b945-745eb3bc5f31', // Domain Name Administrator
-      '29232cdf-9323-42fd-ade2-1d097af3e4de', // Exchange Administrator
-      '3a2c62db-5318-420d-8d74-23affee5d9d5', // Intune Administrator
-      '9f06204d-73c1-4d4c-880a-6edb90606fd8', // Microsoft Entra Joined Device Local Administrator
-      '644ef478-e28f-4e28-b9dc-3fdde9aa0b1f', // Printer Administrator
-      'f28a1f50-f6e7-4571-818b-6a12f2af6b6c', // SharePoint Administrator
-      '69091246-20e8-4a56-aa4d-066075b2a7a8', // Teams Administrator
-      'a9ea8996-122f-4c74-9520-8edcd192826c', // Fabric Administrator
-      '8ac3fc64-6eca-42ea-9e69-59f4c7b60eb2', // Hybrid Identity Administrator
-      'eb1f4a8d-243a-41f0-9fbd-c7cdf6c5ef7c', // Insights Administrator
-      '59d46f88-662b-457b-bceb-5c3809e5908f', // Lifecycle Workflows Administrator
-      '11648597-926c-4cf3-9c36-bcebb0ba8dcc', // Power Platform Administrator
-      '7be44c8a-adaf-4e2a-84d6-ab2649e08a13', // Privileged Authentication Administrator
-      'e8611ab8-c189-46e8-94e1-60213ab1f814', // Privileged Role Administrator
-      '194ae4cb-b126-40b2-bd5b-6091b380977d', // Security Administrator
-];
+export const DEFAULT_ROLE_IDS: string[] = APP_CONFIG.DEFAULT_REQUEST_ROLE_IDS;
 
-/** Predefined group templates for role assignments */
+/**
+ * Group assignment templates, now centralized in APP_CONFIG.
+ * The keys 'basic', 'advanced', and 'expert' map to the lowercase types used in UI components.
+ */
 export const GROUP_TEMPLATES = {
-  basic: {
-    name: 'Production Basic',
-    groupId: 'f7c2d8a1-4b3e-4e9a-9d6f-2a8f4b7c1e35', // CHANGE THIS!
-    roleIds: [
-      'fdd7a751-b60b-444a-984c-02652fe8fa1c', // Groups Administrator
-      'fe930be7-5e62-47db-91af-98c3a49a38b1', // User Administrator
-      'f2ef992c-3afb-46b9-b7cf-a126ee74c451', // Global Reader
-    ],
-  },
-  advanced: {
-    name: 'Production Advanced',
-    groupId: 'f7c2d8a1-4b3e-4e9a-9d6f-2a8f4b7c1e35', // CHANGE THIS!
-    roleIds: [
-      'fdd7a751-b60b-444a-984c-02652fe8fa1c', // Groups Administrator
-      'fe930be7-5e62-47db-91af-98c3a49a38b1', // User Administrator
-      'f2ef992c-3afb-46b9-b7cf-a126ee74c451', // Global Reader
-      '9b895d92-2cd3-44c7-9d02-a6ac2d5ea5c3', // Application Administrator
-      'c4e39bd9-1100-46d3-8c65-fb160da0071f', // Authentication Administrator
-      '8329153b-31d0-4727-b945-745eb3bc5f31', // Domain Name Administrator
-      '29232cdf-9323-42fd-ade2-1d097af3e4de', // Exchange Administrator
-      '3a2c62db-5318-420d-8d74-23affee5d9d5', // Intune Administrator
-      '9f06204d-73c1-4d4c-880a-6edb90606fd8', // Microsoft Entra Joined Device Local Administrator
-      '644ef478-e28f-4e28-b9dc-3fdde9aa0b1f', // Printer Administrator
-      'f28a1f50-f6e7-4571-818b-6a12f2af6b6c', // SharePoint Administrator
-      '69091246-20e8-4a56-aa4d-066075b2a7a8', // Teams Administrator
-    ],
-  },
-  expert: {
-    name: 'Production Expert',
-    groupId: 'f7c2d8a1-4b3e-4e9a-9d6f-2a8f4b7c1e35', // CHANGE THIS!!
-    roleIds: [
-      'fdd7a751-b60b-444a-984c-02652fe8fa1c', // Groups Administrator
-      'fe930be7-5e62-47db-91af-98c3a49a38b1', // User Administrator
-      'f2ef992c-3afb-46b9-b7cf-a126ee74c451', // Global Reader
-      '9b895d92-2cd3-44c7-9d02-a6ac2d5ea5c3', // Application Administrator
-      'c4e39bd9-1100-46d3-8c65-fb160da0071f', // Authentication Administrator
-      '8329153b-31d0-4727-b945-745eb3bc5f31', // Domain Name Administrator
-      '29232cdf-9323-42fd-ade2-1d097af3e4de', // Exchange Administrator
-      '3a2c62db-5318-420d-8d74-23affee5d9d5', // Intune Administrator
-      '9f06204d-73c1-4d4c-880a-6edb90606fd8', // Microsoft Entra Joined Device Local Administrator
-      '644ef478-e28f-4e28-b9dc-3fdde9aa0b1f', // Printer Administrator
-      'f28a1f50-f6e7-4571-818b-6a12f2af6b6c', // SharePoint Administrator
-      '69091246-20e8-4a56-aa4d-066075b2a7a8', // Teams Administrator
-      'a9ea8996-122f-4c74-9520-8edcd192826c', // Fabric Administrator
-      '8ac3fc64-6eca-42ea-9e69-59f4c7b60eb2', // Hybrid Identity Administrator
-      'eb1f4a8d-243a-41f0-9fbd-c7cdf6c5ef7c', // Insights Administrator
-      '59d46f88-662b-457b-bceb-5c3809e5908f', // Lifecycle Workflows Administrator
-      '11648597-926c-4cf3-9c36-bcebb0ba8dcc', // Power Platform Administrator
-      '7be44c8a-adaf-4e2a-84d6-ab2649e08a13', // Privileged Authentication Administrator
-      'e8611ab8-c189-46e8-94e1-60213ab1f814', // Privileged Role Administrator
-      '194ae4cb-b126-40b2-bd5b-6091b380977d', // Security Administrator
-    ],
-  }
+  basic: APP_CONFIG.TEMPLATES.BASIC,
+  advanced: APP_CONFIG.TEMPLATES.ADVANCED,
+  expert: APP_CONFIG.TEMPLATES.EXPERT
 };
 
-
-/** Helper to turn any GUID array into Graph payload shape */
 export function toUnifiedRoles(roleIds: string[]) {
   return roleIds.map((id) => ({ roleDefinitionId: id }));
 }
 
-/** Convenience for defaults */
 export function toUnifiedRolesFromDefaults() {
   return toUnifiedRoles(DEFAULT_ROLE_IDS);
 }
