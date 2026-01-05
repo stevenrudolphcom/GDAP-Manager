@@ -1,7 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
-// FIX: Add imports for Node.js functionality in an ES module context.
 import { fileURLToPath } from 'url';
 import { platform } from 'process';
 import {
@@ -12,44 +11,36 @@ import {
   AccountInfo,
 } from '@azure/msal-node';
 import { is } from '@electron-toolkit/utils';
-// FIX: Added DataProtectionScope for explicit configuration.
 import {
   PersistenceCachePlugin,
   PersistenceCreator,
   DataProtectionScope,
 } from '@azure/msal-node-extensions';
 
-// FIX: Define __dirname for an ES module context.
+// Import centralized configuration
+import { APP_CONFIG } from '../appConfig';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// =========================================================
-//  Azure AD App Configuration (replace placeholders)
-// =========================================================
-const AAD_APP_CLIENT_ID = 'YOUR_CLIENT_ID_HERE'; // Change this!
-const AAD_APP_TENANT_ID = 'YOUR_TENANT_ID_HERE'; // Change this!
+const AAD_APP_CLIENT_ID = APP_CONFIG.AAD_APP_CLIENT_ID;
+const AAD_APP_TENANT_ID = APP_CONFIG.AAD_APP_TENANT_ID;
 
-// =========================================================
 let mainWindow: BrowserWindow | null = null;
-// Note: keep it possibly undefined, and gate access via getMsal()
 let pca: PublicClientApplication | undefined;
 
-// Include OIDC scopes for robust silent refresh + your Graph scopes
 const scopes = [
   'openid',
   'profile',
   'offline_access',
   'User.Read',
   'DelegatedAdminRelationship.ReadWrite.All',
-  'Group.Read.All', // For managing security group assignments
+  'Group.Read.All',
 ];
 
-// =========================================================
-//  Window
-// =========================================================
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1200, // Increased width for the new layout
-    height: 800, // Increased height for the new layout
+    width: 1200,
+    height: 800,
     show: false,
     autoHideMenuBar: true,
     webPreferences: {
@@ -63,14 +54,12 @@ function createWindow() {
     mainWindow!.show();
   });
 
-  // HMR for renderer base on electron-vite cli renderer builds
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL']);
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
 
-  // Open DevTools only in development
   if (is.dev) {
     mainWindow.webContents.openDevTools();
   }
@@ -80,19 +69,15 @@ function createWindow() {
   });
 }
 
-// =========================================================
-//  MSAL Setup
-// =========================================================
 function validateConfig() {
   if (!AAD_APP_CLIENT_ID || AAD_APP_CLIENT_ID.includes('YOUR_CLIENT_ID_HERE')) {
-    throw new Error('MSAL config error: Set AAD_APP_CLIENT_ID in src/main/index.ts');
+    throw new Error('MSAL config error: Set AAD_APP_CLIENT_ID in src/appConfig.ts');
   }
   if (!AAD_APP_TENANT_ID || AAD_APP_TENANT_ID.includes('YOUR_TENANT_ID_HERE')) {
-    throw new Error('MSAL config error: Set AAD_APP_TENANT_ID in src/main/index.ts');
+    throw new Error('MSAL config error: Set AAD_APP_TENANT_ID in src/appConfig.ts');
   }
 }
 
-/** Return a non-null PCA or throw if not initialized yet */
 function getMsal(): PublicClientApplication {
   if (!pca) {
     throw new Error('MSAL not initialized yet. Try again in a moment.');
@@ -107,9 +92,7 @@ async function setupMsal() {
 
   const persistence = await PersistenceCreator.createPersistence({
     cachePath,
-    // FIX: Explicitly set the scope for Windows DPAPI for robust cross-platform support.
     dataProtectionScope: DataProtectionScope.CurrentUser,
-    // These are used by Keychain on macOS and libsecret on Linux for secure storage
     serviceName: 'com.netox.gdapcreator',
     accountName: 'msal-cache',
   });
@@ -138,15 +121,11 @@ async function setupMsal() {
   pca = new PublicClientApplication(msalConfig);
 }
 
-// Helper: pick the first account (customize to show UI if you support multiple)
 async function getFirstAccount(msal: PublicClientApplication): Promise<AccountInfo | null> {
   const accounts = await msal.getTokenCache().getAllAccounts();
   return accounts.length > 0 ? accounts[0] : null;
 }
 
-// =========================================================
-//  App Lifecycle
-// =========================================================
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -161,19 +140,18 @@ if (!app.requestSingleInstanceLock()) {
     try {
       await setupMsal();
       createWindow();
-        } catch (error: any) {
-          console.error('Application startup failed:', error.message);
-          dialog.showErrorBox(
-          'Configuration Error',
-          `${error.message}\n\nPlease add your App IDs to src/main/index.ts and restart the application.`
-        );
-        app.quit();
-        }
- });
+    } catch (error: any) {
+      console.error('Application startup failed:', error.message);
+      dialog.showErrorBox(
+        'Configuration Error',
+        `${error.message}\n\nPlease add your Azure App IDs to src/appConfig.ts and restart the application.`
+      );
+      app.quit();
+    }
+  });
 }
 
 app.on('window-all-closed', () => {
-  // FIX: Use imported `platform` instead of `process.platform` to satisfy TypeScript.
   if (platform !== 'darwin') app.quit();
 });
 
@@ -181,9 +159,6 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
-// =========================================================
-//  IPC Authentication Handlers
-// =========================================================
 ipcMain.handle('login', async () => {
   try {
     const msal = getMsal();
@@ -222,10 +197,8 @@ ipcMain.handle('logout', async () => {
 ipcMain.handle('get-token', async (): Promise<{ accessToken: string } | null> => {
   try {
     const msal = getMsal();
-
     let account = await getFirstAccount(msal);
     if (!account) {
-      // If not signed in, do an interactive login here to keep renderer simple
       const interactive = await msal.acquireTokenInteractive({
         scopes,
         openBrowser: async (url: string) => {
@@ -238,13 +211,10 @@ ipcMain.handle('get-token', async (): Promise<{ accessToken: string } | null> =>
         return null;
       }
     }
-
-    // Try silent first
     let authResult: AuthenticationResult | null = null;
     try {
       authResult = await msal.acquireTokenSilent({ account, scopes });
     } catch {
-      console.log('Silent token acquisition failed, trying interactive.');
       authResult = await msal.acquireTokenInteractive({
         scopes,
         openBrowser: async (url: string) => {
@@ -252,11 +222,9 @@ ipcMain.handle('get-token', async (): Promise<{ accessToken: string } | null> =>
         },
       });
     }
-
     if (authResult?.accessToken) {
       return { accessToken: authResult.accessToken };
     }
-
     dialog.showErrorBox('Token Error', 'No access token was returned.');
     return null;
   } catch (err: any) {
@@ -275,7 +243,7 @@ ipcMain.handle('get-account', async () => {
           username: acc.username,
           environment: acc.environment,
           tenantId: acc.tenantId,
-          name: acc.name, // FIX: Pass the display name to the renderer
+          name: acc.name,
         }
       : null;
   } catch {
@@ -283,9 +251,6 @@ ipcMain.handle('get-account', async () => {
   }
 });
 
-// =========================================================
-//  IPC: User Default Roles
-// =========================================================
 const defaultsFilePath = path.join(app.getPath('userData'), 'user-default-roles.json');
 
 ipcMain.handle('load-default-roles', async () => {
