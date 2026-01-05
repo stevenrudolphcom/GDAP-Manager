@@ -26,39 +26,50 @@ const ManageAssignments: React.FC = () => {
             const token = await getAccessToken();
             const data = await getGDAPRelationships(token);
             setRelationships(data);
+            
+            // If we have a selected relationship, try to find its updated version in the new data
+            if (selectedRelationship) {
+                const updated = data.find(r => r.id === selectedRelationship.id);
+                if (updated) setSelectedRelationship(updated);
+            }
         } catch (err: any) {
             setError(err.message || 'An error occurred while fetching relationships.');
         } finally {
             setIsLoading(false);
         }
-    }, [getAccessToken]);
+    }, [getAccessToken, selectedRelationship]);
 
     useEffect(() => {
         fetchRelationships();
-    }, [fetchRelationships]);
+    }, []); // Only fetch once on mount
 
     const handleRefresh = () => {
         setSelectedRelationship(null);
         fetchRelationships();
     };
 
-    if (isLoading) {
+    const handleUpdateRelationship = (updated: DelegatedAdminRelationship) => {
+        setRelationships(prev => prev.map(r => r.id === updated.id ? updated : r));
+        setSelectedRelationship(updated);
+    };
+
+    if (isLoading && relationships.length === 0) {
         return (
-            <div className="flex items-center justify-center p-8">
-                <SpinnerIcon className="h-8 w-8 animate-spin text-indigo-600" />
-                <span className="ml-2 text-gray-600">Loading relationships...</span>
+            <div className="flex flex-col items-center justify-center p-12 bg-white shadow-lg rounded-lg min-h-[400px]">
+                <SpinnerIcon className="h-12 w-12 animate-spin text-indigo-600" />
+                <span className="mt-4 text-gray-600 font-bold uppercase tracking-widest text-sm">Loading relationships...</span>
             </div>
         );
     }
     
-    if (error) {
+    if (error && relationships.length === 0) {
         return (
             <div className="text-center p-8 bg-red-50 border border-red-200 rounded-lg">
                 <p className="text-red-700 font-semibold">Failed to load data</p>
                 <p className="text-red-600 text-sm mt-1">{error}</p>
                 <button 
                     onClick={fetchRelationships} 
-                    className="mt-4 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-md hover:bg-red-700"
+                    className="mt-4 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-md hover:bg-red-700 transition-colors"
                 >
                     Try Again
                 </button>
@@ -68,7 +79,7 @@ const ManageAssignments: React.FC = () => {
 
     return (
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6 bg-white shadow-lg rounded-lg p-4 md:p-6 min-h-[600px]">
-            <div className="md:col-span-1 lg:col-span-1 border-r border-gray-200 pr-4">
+            <div className="md:col-span-1 lg:col-span-1 border-r border-gray-100 pr-4">
                 <RelationshipList 
                     relationships={relationships}
                     selectedRelationshipId={selectedRelationship?.id || null}
@@ -78,9 +89,10 @@ const ManageAssignments: React.FC = () => {
             </div>
             <div className="md:col-span-2 lg:col-span-3">
                 <AssignmentEditor 
-                    key={selectedRelationship?.id} // Force re-mount on selection change
+                    key={selectedRelationship?.id} 
                     relationship={selectedRelationship} 
-                    getAccessToken={getAccessToken} 
+                    getAccessToken={getAccessToken}
+                    onUpdateRelationship={handleUpdateRelationship}
                 />
             </div>
         </div>
