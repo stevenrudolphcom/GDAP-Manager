@@ -7,11 +7,12 @@ PLEASE NOTE: This app is only tested on Windows, but should run and build packag
 
 ## Changelog:
 5.1.2026
-- Updated so userdefined variables are easily changeable in one file /src/appConfig.ts and no in several different files.
+- Updated so userdefined variables are easily changeable in one file /src/appConfig.ts and not in several different files.
 - Relantionship enddate is visible and autorenew is now toggleable on/off.
 - Other minor quality-of-life upgrades
 
-9.12.2025 When selecting roles for groups in a relationship, only eligible, available roles in the relationship are selectable.
+9.12.2025
+- When selecting roles for groups in a relationship, only eligible, available roles in the relationship are selectable.
 
 ## IMPORTANT: Azure App Registration Setup
 
