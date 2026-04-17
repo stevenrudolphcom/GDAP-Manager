@@ -39,8 +39,9 @@ const scopes = [
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1200,
+    width: 1400,
     height: 800,
+    minWidth: 1400,
     show: false,
     autoHideMenuBar: true,
     webPreferences: {

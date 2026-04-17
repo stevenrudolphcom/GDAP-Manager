@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { APP_CONFIG } from '../../../appConfig';
 
 const SignInButton: React.FC = () => {
     const handleLogin = () => {
@@ -72,9 +73,22 @@ const AuthLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const name = account?.name; // Now correctly uses the `name` property
 
     return (
-        <div className="min-h-screen bg-gray-50 text-gray-800 flex flex-col items-center justify-center p-4">
+        <div
+            className={`min-h-screen bg-gray-50 text-gray-800 flex flex-col items-center p-4 relative ${
+                isAuthenticated ? 'justify-start' : 'justify-center'
+            }`}
+        >
+            <div className="absolute top-4 left-4 rounded-md border border-gray-200 bg-white/90 px-3 py-2 text-xs text-gray-700 shadow-sm space-y-1">
+                <div className="font-semibold">
+                    Root-Version: {APP_CONFIG.ROOT_VERSION} <span className="font-normal text-gray-600">(Autor: {APP_CONFIG.ROOT_AUTHOR})</span>
+                </div>
+                <div className="font-semibold">
+                    Sub-Version: {APP_CONFIG.SUB_VERSION} <span className="font-normal text-gray-600">(Contributor: {APP_CONFIG.SUB_CONTRIBUTOR})</span>
+                </div>
+            </div>
+
             {isAuthenticated && (
-                <header className="w-full max-w-4xl flex justify-end items-center pb-4">
+                <header className="w-full flex justify-end items-center pb-4">
                     <div className="text-right">
                         <p className="text-sm font-semibold text-gray-800">{name}</p>
                         <SignOutButton onSignOut={handleSignOut} />

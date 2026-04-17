@@ -58,3 +58,8 @@ export interface DelegatedAdminAccessAssignment {
     createdDateTime: string;
     lastModifiedDateTime: string;
 }
+
+export interface SecurityGroupSearchResult {
+    id: string;
+    displayName: string;
+}

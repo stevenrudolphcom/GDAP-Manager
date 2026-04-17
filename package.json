@@ -1,6 +1,6 @@
 {
   "name": "GDAP-Manager",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "A desktop application to create Microsoft 365 GDAP requests, powered by Vite + Electron.",
   "main": "out/main/index.js",
   "scripts": {
@@ -13,6 +13,7 @@
     "clean": "rimraf out release"
   },
   "author": "Jarno Kurki",
+  "contributor": "Steven Rudolph",
   "license": "MIT",
   "dependencies": {
     "@azure/msal-node": "^3.8.1",

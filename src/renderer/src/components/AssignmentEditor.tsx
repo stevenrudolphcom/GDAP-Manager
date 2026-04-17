@@ -1,25 +1,38 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { DelegatedAdminRelationship, DelegatedAdminAccessAssignment, UnifiedRole } from '../types';
+import { DelegatedAdminRelationship, DelegatedAdminAccessAssignment, UnifiedRole, SecurityGroupSearchResult } from '../types';
 import {
     getGDAPAssignmentsWithGroupDisplayNames,
     createGDAPAccessAssignment,
     updateGDAPAccessAssignment,
     deleteGDAPAccessAssignment,
-    updateGDAPRelationshipAutoExtend
+    updateGDAPRelationshipAutoExtend,
+    searchSecurityGroups
 } from '../services/graphService';
 import { AZURE_AD_ROLES, GROUP_TEMPLATES } from '../constants';
 import RoleSelector from './RoleSelector';
+import { useDebounce } from '../hooks/useDebounce';
 import SpinnerIcon from './icons/SpinnerIcon';
 import ClipboardIcon from './icons/ClipboardIcon';
 import ClipboardCheckIcon from './icons/ClipboardCheckIcon';
 import ChevronDownIcon from './icons/ChevronDownIcon';
 import TrashIcon from './icons/TrashIcon';
+import SearchIcon from './icons/SearchIcon';
 
 interface AssignmentEditorProps {
     relationship: DelegatedAdminRelationship | null;
     getAccessToken: () => Promise<string>;
     onUpdateRelationship: (relationship: DelegatedAdminRelationship) => void;
 }
+
+const buildTemplateColor = (templateKey: string): string => {
+    let hash = 0;
+    for (let i = 0; i < templateKey.length; i += 1) {
+        hash = templateKey.charCodeAt(i) + ((hash << 5) - hash);
+    }
+
+    const hue = Math.abs(hash % 360);
+    return `hsl(${hue}, 68%, 48%)`;
+};
 
 const CopyToClipboard: React.FC<{ text: string }> = ({ text }) => {
     const [copied, setCopied] = useState(false);
@@ -55,12 +68,67 @@ const AssignmentForm: React.FC<{
     onCancel: () => void;
     getAccessToken: () => Promise<string>;
     allowedRoleIds?: string[];
-}> = ({ relationshipId, existingAssignment, onSave, onCancel, getAccessToken, allowedRoleIds }) => {
+    usedSecurityGroupIds?: string[];
+}> = ({ relationshipId, existingAssignment, onSave, onCancel, getAccessToken, allowedRoleIds, usedSecurityGroupIds = [] }) => {
     const [securityGroupId, setSecurityGroupId] = useState(existingAssignment?.accessContainer.accessContainerId || '');
     const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>(existingAssignment?.accessDetails.unifiedRoles.map(r => r.roleDefinitionId) || []);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [templateWarning, setTemplateWarning] = useState<string | null>(null);
+    const [appliedTemplateName, setAppliedTemplateName] = useState<string | null>(null);
+    const [groupSearchTerm, setGroupSearchTerm] = useState('');
+    const [groupOptions, setGroupOptions] = useState<SecurityGroupSearchResult[]>([]);
+    const [selectedGroupDisplayName, setSelectedGroupDisplayName] = useState<string | null>(
+        existingAssignment?.accessContainer.displayName || null
+    );
+    const [isSearchingGroups, setIsSearchingGroups] = useState(false);
+    const [groupSearchError, setGroupSearchError] = useState<string | null>(null);
+
+    const debouncedGroupSearchTerm = useDebounce(groupSearchTerm, 300);
+    const sortedGroupOptions = useMemo(
+        () =>
+            [...groupOptions].sort((a, b) =>
+                (a.displayName || '').localeCompare(b.displayName || '', 'de', { sensitivity: 'base' })
+            ),
+        [groupOptions]
+    );
+    const usedSecurityGroupIdSet = useMemo(() => new Set(usedSecurityGroupIds), [usedSecurityGroupIds]);
+
+    useEffect(() => {
+        if (existingAssignment) return;
+
+        let isActive = true;
+
+        const runSearch = async () => {
+            setIsSearchingGroups(true);
+            setGroupSearchError(null);
+            try {
+                const token = await getAccessToken();
+                const groups = await searchSecurityGroups(debouncedGroupSearchTerm, token);
+                if (!isActive) return;
+                setGroupOptions(groups);
+            } catch (err: any) {
+                if (!isActive) return;
+                setGroupSearchError(err.message || 'Security groups could not be loaded.');
+            } finally {
+                if (isActive) setIsSearchingGroups(false);
+            }
+        };
+
+        runSearch();
+
+        return () => {
+            isActive = false;
+        };
+    }, [debouncedGroupSearchTerm, existingAssignment, getAccessToken]);
+
+    const handleSelectGroup = (group: SecurityGroupSearchResult) => {
+        setSecurityGroupId(group.id);
+        setSelectedGroupDisplayName(group.displayName);
+        setGroupSearchTerm(group.displayName);
+        setGroupSearchError(null);
+        autoApplyTemplateByGroupName(group.displayName);
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -91,9 +159,44 @@ const AssignmentForm: React.FC<{
         }
     };
 
-    const applyTemplate = (template: 'basic' | 'advanced' | 'expert') => {
-        const selectedTemplate = GROUP_TEMPLATES[template];
-        setSecurityGroupId(selectedTemplate.groupId);
+    const templateEntries = useMemo(() => Object.entries(GROUP_TEMPLATES), []);
+    const templateColorMap = useMemo(
+        () =>
+            Object.fromEntries(
+                templateEntries.map(([key]) => [key, buildTemplateColor(key)])
+            ) as Record<string, string>,
+        [templateEntries]
+    );
+    const templateMatchers = useMemo(
+        () =>
+            templateEntries
+                .map(([key, template]) => ({
+                    key,
+                    variants: [key.toLowerCase(), template.name.toLowerCase()]
+                }))
+                .sort((a, b) => {
+                    const longestA = Math.max(...a.variants.map(v => v.length));
+                    const longestB = Math.max(...b.variants.map(v => v.length));
+                    return longestB - longestA;
+                }),
+        [templateEntries]
+    );
+    const sortedSelectedRoleIds = useMemo(
+        () =>
+            [...selectedRoleIds].sort((a, b) => {
+                const nameA = AZURE_AD_ROLES.find((r) => r.id === a)?.displayName || a;
+                const nameB = AZURE_AD_ROLES.find((r) => r.id === b)?.displayName || b;
+                return nameA.localeCompare(nameB, 'de', { sensitivity: 'base' });
+            }),
+        [selectedRoleIds]
+    );
+
+    const applyTemplate = (templateKey: string) => {
+        const selectedTemplate = GROUP_TEMPLATES[templateKey];
+        if (!selectedTemplate) {
+            setError(`Template not found: ${templateKey}`);
+            return;
+        }
         let validRoles = selectedTemplate.roleIds;
         let droppedRoleIds: string[] = [];
         if (allowedRoleIds) {
@@ -101,11 +204,23 @@ const AssignmentForm: React.FC<{
             droppedRoleIds = selectedTemplate.roleIds.filter(id => !allowedRoleIds.includes(id));
         }
         setSelectedRoleIds(validRoles);
+        setAppliedTemplateName(selectedTemplate.name);
         if (droppedRoleIds.length > 0) {
             const droppedNames = droppedRoleIds.map(id => AZURE_AD_ROLES.find(r => r.id === id)?.displayName || id).join(', ');
             setTemplateWarning(`Roles not available: ${droppedNames}.`);
         } else {
             setTemplateWarning(null);
+        }
+    };
+
+    const autoApplyTemplateByGroupName = (groupDisplayName: string) => {
+        const normalizedGroupName = groupDisplayName.toLowerCase();
+        const matchedTemplate = templateMatchers.find((templateMatcher) =>
+            templateMatcher.variants.some((variant) => normalizedGroupName.includes(variant))
+        );
+
+        if (matchedTemplate) {
+            applyTemplate(matchedTemplate.key);
         }
     };
 
@@ -122,34 +237,155 @@ const AssignmentForm: React.FC<{
                 </div>
             </div>
 
-            <div>
-                 <label className="block text-sm font-medium text-gray-700">Security Group ID</label>
-                 <input
-                    type="text"
-                    value={securityGroupId}
-                    onChange={(e) => setSecurityGroupId(e.target.value)}
-                    disabled={!!existingAssignment}
-                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm disabled:bg-gray-100 disabled:text-gray-500 font-mono"
-                    placeholder="Enter Group Object ID"
-                    required
-                />
-            </div>
+            {existingAssignment ? (
+                <div>
+                    <label className="block text-sm font-medium text-gray-700">Security Group ID</label>
+                    <input
+                        type="text"
+                        value={securityGroupId}
+                        onChange={(e) => setSecurityGroupId(e.target.value)}
+                        disabled
+                        className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm disabled:bg-gray-100 disabled:text-gray-500 font-mono"
+                        placeholder="Enter Group Object ID"
+                        required
+                    />
+                </div>
+            ) : (
+                <div className="space-y-3">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">Search Security Group</label>
+                        <div className="relative mt-1">
+                            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                            <input
+                                type="text"
+                                value={groupSearchTerm}
+                                onChange={(e) => setGroupSearchTerm(e.target.value)}
+                                className="block w-full pl-9 pr-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                                placeholder="Filter by display name (e.g. Helpdesk)"
+                            />
+                        </div>
+                        {groupSearchError && <p className="mt-2 text-xs text-red-600">{groupSearchError}</p>}
+                    </div>
+
+                    <div className="border border-gray-200 rounded-md bg-white max-h-48 overflow-y-auto">
+                        {isSearchingGroups ? (
+                            <div className="px-3 py-2 text-xs text-gray-500 flex items-center">
+                                <SpinnerIcon className="animate-spin h-4 w-4 mr-2" />
+                                Loading groups...
+                            </div>
+                        ) : sortedGroupOptions.length > 0 ? (
+                            <ul>
+                                {sortedGroupOptions.map((group) => {
+                                    const isAlreadyUsed = usedSecurityGroupIdSet.has(group.id);
+                                    return (
+                                        <li key={group.id}>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleSelectGroup(group)}
+                                                className={`w-full text-left px-3 py-2 hover:bg-indigo-50 transition-colors ${securityGroupId === group.id ? 'bg-indigo-50 border-l-2 border-indigo-500' : ''}`}
+                                            >
+                                                <p className={`text-sm font-semibold truncate ${isAlreadyUsed ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
+                                                    {group.displayName}
+                                                </p>
+                                                <p className={`text-xs font-mono truncate ${isAlreadyUsed ? 'text-gray-400 line-through' : 'text-gray-500'}`}>
+                                                    {group.id}
+                                                </p>
+                                            </button>
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        ) : (
+                            <div className="px-3 py-2 text-xs text-gray-500">No matching security groups found.</div>
+                        )}
+                    </div>
+
+                    {selectedGroupDisplayName && (
+                        <div className="px-3 py-2 rounded-md bg-indigo-50 border border-indigo-100 text-sm text-indigo-800">
+                            Selected: <span className="font-semibold">{selectedGroupDisplayName}</span>
+                        </div>
+                    )}
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">Security Group ID</label>
+                        <input
+                            type="text"
+                            value={securityGroupId}
+                            onChange={(e) => {
+                                setSecurityGroupId(e.target.value);
+                                if (!e.target.value) setSelectedGroupDisplayName(null);
+                            }}
+                            className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm font-mono"
+                            placeholder="Selected ID appears here (or enter manually)"
+                            required
+                        />
+                    </div>
+                </div>
+            )}
+
+
+            {existingAssignment && selectedRoleIds.length > 0 && (
+                <div className="border border-gray-200 rounded-lg p-4 bg-white">
+                    <h4 className="text-sm font-medium text-gray-700 mb-3">Assigned Roles ({selectedRoleIds.length})</h4>
+                    <div className="max-h-60 overflow-y-auto pr-2 space-y-2">
+                        {sortedSelectedRoleIds.map(roleId => {
+                            const role = AZURE_AD_ROLES.find(r => r.id === roleId);
+                            if (!role) return null;
+                            return (
+                                <div key={roleId} className="relative flex items-start p-3 rounded-md hover:bg-gray-50">
+                                    <div className="flex items-center h-5">
+                                        <input type="checkbox" checked readOnly className="h-4 w-4 text-indigo-600 border-gray-300 rounded" />
+                                    </div>
+                                    <div className="ml-3 text-sm">
+                                        <span className="font-medium text-gray-900">{role.displayName}</span>
+                                        <p className="text-gray-500">{role.description}</p>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
 
             {!existingAssignment && (
                 <div className="flex flex-col space-y-2">
-                    <div className="flex items-center space-x-2 overflow-x-auto pb-1 no-scrollbar">
-                        <span className="text-sm font-medium text-gray-700 whitespace-nowrap">Templates:</span>
-                        <button type="button" onClick={() => applyTemplate('basic')} className="px-3 py-1 text-xs font-bold text-white bg-blue-500 rounded-full hover:bg-blue-600 transition-colors whitespace-nowrap">
-                            {GROUP_TEMPLATES.basic.name}
-                        </button>
-                        <button type="button" onClick={() => applyTemplate('advanced')} className="px-3 py-1 text-xs font-bold text-white bg-purple-500 rounded-full hover:bg-purple-600 transition-colors whitespace-nowrap">
-                            {GROUP_TEMPLATES.advanced.name}
-                        </button>
-                        <button type="button" onClick={() => applyTemplate('expert')} className="px-3 py-1 text-xs font-bold text-white bg-red-500 rounded-full hover:bg-red-600 transition-colors whitespace-nowrap">
-                            {GROUP_TEMPLATES.expert.name}
-                        </button>
+                    <div className="flex flex-wrap items-center gap-2 pb-1">
+                        <span className="text-sm font-medium text-gray-700">Templates:</span>
+                        {templateEntries.map(([key, template]) => (
+                            <button
+                                key={key}
+                                type="button"
+                                onClick={() => applyTemplate(key)}
+                                style={{ backgroundColor: templateColorMap[key] }}
+                                className={`px-3 py-1 text-xs font-bold text-white rounded-full transition-opacity whitespace-nowrap hover:opacity-90 border-4 ${appliedTemplateName === template.name ? 'border-gray-900' : 'border-transparent'}`}
+                            >
+                                {template.name}
+                            </button>
+                        ))}
                     </div>
                     {templateWarning && <div className="p-2 bg-yellow-50 text-yellow-800 text-xs border border-yellow-200 rounded">{templateWarning}</div>}
+                    {appliedTemplateName && selectedRoleIds.length > 0 && (
+                        <div className="border border-gray-200 rounded-lg p-4 bg-white">
+                            <h4 className="text-sm font-medium text-gray-700 mb-3">Included Roles – {appliedTemplateName} ({selectedRoleIds.length})</h4>
+                            <div className="max-h-60 overflow-y-auto pr-2 space-y-2">
+                                {sortedSelectedRoleIds.map(roleId => {
+                                    const role = AZURE_AD_ROLES.find(r => r.id === roleId);
+                                    if (!role) return null;
+                                    return (
+                                        <div key={roleId} className="relative flex items-start p-3 rounded-md hover:bg-gray-50">
+                                            <div className="flex items-center h-5">
+                                                <input type="checkbox" checked readOnly className="h-4 w-4 text-indigo-600 border-gray-300 rounded" />
+                                            </div>
+                                            <div className="ml-3 text-sm">
+                                                <span className="font-medium text-gray-900">{role.displayName}</span>
+                                                <p className="text-gray-500">{role.description}</p>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -187,8 +423,20 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
     const [isCreating, setIsCreating] = useState(false);
     const [isProcessingId, setIsProcessingId] = useState<string | null>(null);
     const [expandedAssignmentId, setExpandedAssignmentId] = useState<string | null>(null);
+    const [showDisableAutoExtendConfirm, setShowDisableAutoExtendConfirm] = useState(false);
 
     const roleMap = useMemo(() => new Map<string, UnifiedRole>(AZURE_AD_ROLES.map(role => [role.id, role])), []);
+    const sortedAssignments = useMemo(
+        () =>
+            [...assignments].sort((a, b) =>
+                (a.accessContainer.displayName || '').localeCompare(b.accessContainer.displayName || '', 'de', { sensitivity: 'base' })
+            ),
+        [assignments]
+    );
+    const usedSecurityGroupIds = useMemo(
+        () => assignments.map(a => a.accessContainer.accessContainerId).filter(Boolean),
+        [assignments]
+    );
 
     const allowedRoleIds = useMemo(() => {
         if (!relationship?.accessDetails?.unifiedRoles) return undefined;
@@ -215,16 +463,11 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
         fetchAssignments();
     }, [fetchAssignments]);
 
-    const handleToggleAutoExtend = async () => {
+    const updateAutoExtend = async (nextState: boolean) => {
         if (!relationship || isUpdatingAutoExtend) return;
-        
-        const isCurrentlyEnabled = relationship.autoExtendDuration !== null && 
-                                  relationship.autoExtendDuration !== 'PT0S' && 
-                                  relationship.autoExtendDuration !== 'P0D';
-        
-        const nextState = !isCurrentlyEnabled;
+
         const etag = relationship['@odata.etag'] as string;
-        
+
         if (!etag) {
             setError('Relationship ETag is missing. Please refresh the list.');
             return;
@@ -249,6 +492,23 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
         }
     };
 
+    const handleToggleAutoExtend = async () => {
+        if (!relationship || isUpdatingAutoExtend) return;
+
+        const isCurrentlyEnabled = relationship.autoExtendDuration !== null &&
+                                  relationship.autoExtendDuration !== 'PT0S' &&
+                                  relationship.autoExtendDuration !== 'P0D';
+
+        const nextState = !isCurrentlyEnabled;
+
+        if (!nextState) {
+            setShowDisableAutoExtendConfirm(true);
+            return;
+        }
+
+        await updateAutoExtend(nextState);
+    };
+
     const handleRemoveAssignment = async (assignment: DelegatedAdminAccessAssignment) => {
         if (!window.confirm(`Are you sure you want to remove this assignment?`)) return;
         const etag = assignment['@odata.etag'];
@@ -269,8 +529,8 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
     
     if (!relationship) {
         return (
-            <div className="flex items-center justify-center h-full text-center p-8 bg-gray-50/50 rounded-2xl border-2 border-dashed border-gray-200">
-                <div>
+            <div className="flex items-start justify-start h-full text-left p-8 bg-gray-50/50 rounded-2xl border-2 border-dashed border-gray-200">
+                <div className="pt-2">
                     <h2 className="text-xl font-bold text-gray-600">Select a Relationship</h2>
                     <p className="mt-2 text-gray-500">Choose a relationship from the sidebar to manage assignments and auto-renew.</p>
                 </div>
@@ -285,6 +545,35 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
 
     return (
         <div className="space-y-6 animate-in fade-in duration-500">
+            {showDisableAutoExtendConfirm && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                    <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-5 shadow-2xl">
+                        <h3 className="text-lg font-black text-gray-900">Disable Auto-extend?</h3>
+                        <p className="mt-2 text-sm text-gray-600">
+                            Are you sure you want to disable auto-extend for this relationship?
+                        </p>
+                        <div className="mt-5 flex justify-end space-x-2">
+                            <button
+                                type="button"
+                                onClick={() => setShowDisableAutoExtendConfirm(false)}
+                                className="px-4 py-2 text-sm font-bold text-gray-700 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={async () => {
+                                    setShowDisableAutoExtendConfirm(false);
+                                    await updateAutoExtend(false);
+                                }}
+                                className="px-4 py-2 text-sm font-bold text-white bg-red-600 rounded-xl hover:bg-red-700 transition-colors"
+                            >
+                                Disable
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
             <header className="flex flex-col md:flex-row md:items-start md:justify-between border-b border-gray-100 pb-6 gap-4">
                 <div className="space-y-1 flex-1 min-w-0">
                     <h2 className="text-2xl font-black text-gray-900 break-words leading-tight" title={displayName}>{displayName}</h2>
@@ -296,6 +585,20 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
                 
                 <div className="flex flex-col items-end space-y-2 flex-shrink-0">
                     <div className="flex items-center space-x-3 bg-white p-2.5 rounded-2xl border border-gray-200 shadow-sm">
+                        <button
+                            onClick={fetchAssignments}
+                            disabled={isLoading}
+                            className="inline-flex items-center px-3 py-2 text-xs font-black text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-xl hover:bg-indigo-100 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {isLoading ? (
+                                <>
+                                    <SpinnerIcon className="animate-spin h-4 w-4 mr-2" />
+                                    Syncing...
+                                </>
+                            ) : (
+                                'Sync Assignments'
+                            )}
+                        </button>
                         <span className="text-sm font-extrabold text-gray-700">Auto-extend</span>
                         <button
                             onClick={handleToggleAutoExtend}
@@ -345,13 +648,13 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
                     
                     {isCreating && (
                         <div className="animate-in fade-in slide-in-from-top-4 duration-300">
-                            <AssignmentForm relationshipId={relationship.id} onSave={() => { setIsCreating(false); fetchAssignments(); }} onCancel={() => setIsCreating(false)} getAccessToken={getAccessToken} allowedRoleIds={allowedRoleIds} />
+                            <AssignmentForm relationshipId={relationship.id} onSave={() => { setIsCreating(false); fetchAssignments(); }} onCancel={() => setIsCreating(false)} getAccessToken={getAccessToken} allowedRoleIds={allowedRoleIds} usedSecurityGroupIds={usedSecurityGroupIds} />
                         </div>
                     )}
 
-                    {assignments.length > 0 ? (
+                    {sortedAssignments.length > 0 ? (
                         <ul className="grid grid-cols-1 gap-4">
-                            {assignments.map(a => editingAssignment?.id === a.id ? (
+                            {sortedAssignments.map(a => editingAssignment?.id === a.id ? (
                                 <li key={a.id} className="animate-in zoom-in-95 duration-200">
                                     <AssignmentForm relationshipId={relationship.id} existingAssignment={a} onSave={() => { setEditingAssignment(null); fetchAssignments(); }} onCancel={() => setEditingAssignment(null)} getAccessToken={getAccessToken} allowedRoleIds={allowedRoleIds} />
                                 </li>
@@ -383,7 +686,13 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
                                         </button>
                                         {expandedAssignmentId === a.id && (
                                             <div className="px-4 pb-5 flex flex-wrap gap-2 animate-in slide-in-from-top-2 duration-300">
-                                                {a.accessDetails.unifiedRoles.map(r => (
+                                                {[...a.accessDetails.unifiedRoles]
+                                                    .sort((r1, r2) => {
+                                                        const name1 = roleMap.get(r1.roleDefinitionId)?.displayName || r1.roleDefinitionId;
+                                                        const name2 = roleMap.get(r2.roleDefinitionId)?.displayName || r2.roleDefinitionId;
+                                                        return name1.localeCompare(name2, 'de', { sensitivity: 'base' });
+                                                    })
+                                                    .map(r => (
                                                     <span key={r.roleDefinitionId} className="px-3 py-1 text-[11px] font-bold bg-white text-gray-700 rounded-lg border border-gray-200 shadow-sm hover:border-indigo-200 hover:text-indigo-600 transition-colors">
                                                         {roleMap.get(r.roleDefinitionId)?.displayName || 'Unknown Role'}
                                                     </span>

@@ -38,7 +38,7 @@ const App: React.FC = () => {
 
     return (
         <AuthLayout>
-            <div className="w-full max-w-6xl">
+            <div className="w-[95%]">
                 <header className="text-center mb-8">
                     <h1 className="text-3xl md:text-4xl font-bold text-gray-900">{headerContent.title}</h1>
                     <p className="text-md text-gray-600 mt-2">{headerContent.subtitle}</p>

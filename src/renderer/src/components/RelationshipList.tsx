@@ -13,12 +13,19 @@ const RelationshipList: React.FC<RelationshipListProps> = ({ relationships, sele
     const [filter, setFilter] = useState('');
 
     const filteredRelationships = useMemo(() => {
-        if (!filter) return relationships;
-        return relationships.filter(
-            (r) =>
-                r.displayName.toLowerCase().includes(filter.toLowerCase()) ||
-                r.customer.tenantId.toLowerCase().includes(filter.toLowerCase())
-        );
+        const filtered = !filter
+            ? relationships
+            : relationships.filter(
+                (r) =>
+                    r.displayName.toLowerCase().includes(filter.toLowerCase()) ||
+                    r.customer.tenantId.toLowerCase().includes(filter.toLowerCase())
+            );
+        const isTerminated = (s: string) => s === 'terminated' || s === 'terminating' ? 1 : 0;
+        return [...filtered].sort((a, b) => {
+            const termDiff = isTerminated(a.status) - isTerminated(b.status);
+            if (termDiff !== 0) return termDiff;
+            return a.displayName.localeCompare(b.displayName);
+        });
     }, [relationships, filter]);
 
     const getStatusColor = (status: DelegatedAdminRelationship['status']) => {

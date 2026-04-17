@@ -1,4 +1,4 @@
-import { GraphApiGDAPRequest, DelegatedAdminRelationship, DelegatedAdminAccessAssignment } from '../types';
+import { GraphApiGDAPRequest, DelegatedAdminRelationship, DelegatedAdminAccessAssignment, SecurityGroupSearchResult } from '../types';
 import { graphEndpoints } from '../auth/authConfig';
 import { DEFAULT_ROLE_IDS } from '../constants';
 
@@ -281,6 +281,51 @@ export const updateGDAPAccessAssignment = async (relationshipId: string, assignm
 export const deleteGDAPAccessAssignment = async (relationshipId: string, assignmentId: string, etag: string, accessToken: string): Promise<void> => {
     const endpoint = `${graphEndpoints.graphApi}/${relationshipId}/accessAssignments/${assignmentId}`;
     await callGraphApi(accessToken, endpoint, { method: 'DELETE', headers: new Headers({ 'If-Match': etag }) });
+};
+
+export const searchSecurityGroups = async (
+  searchTerm: string,
+  accessToken: string
+): Promise<SecurityGroupSearchResult[]> => {
+  const trimmed = searchTerm.trim();
+
+  // Graph API returns max 999 per page — paginate through all pages
+  const PAGE_SIZE = 999;
+
+  let firstEndpoint: string;
+  let requestOptions: RequestInit | undefined;
+
+  if (trimmed) {
+    const searchValue = trimmed.replace(/"/g, '\\"');
+    firstEndpoint = `https://graph.microsoft.com/v1.0/groups?$select=id,displayName&$filter=securityEnabled eq true&$search="displayName:${searchValue}"&$top=${PAGE_SIZE}`;
+    requestOptions = { headers: new Headers({ ConsistencyLevel: 'eventual' }) };
+  } else {
+    firstEndpoint = `https://graph.microsoft.com/v1.0/groups?$select=id,displayName&$filter=securityEnabled eq true&$top=${PAGE_SIZE}`;
+  }
+
+  const allGroups: any[] = [];
+  let nextLink: string | undefined = firstEndpoint;
+
+  while (nextLink) {
+    const response = await callGraphApi(accessToken, nextLink, requestOptions);
+    const page: any[] = response?.value || [];
+    allGroups.push(...page);
+    nextLink = response?.['@odata.nextLink'];
+  }
+
+  const normalizedSearch = trimmed.toLowerCase();
+
+  return allGroups
+    .filter((g: any) => typeof g?.id === 'string')
+    .map((g: any) => ({
+      id: g.id,
+      displayName: g.displayName || g.id,
+    }))
+    .filter((g: SecurityGroupSearchResult) => {
+      if (!normalizedSearch) return true;
+      return g.displayName.toLowerCase().includes(normalizedSearch);
+    })
+    .sort((a: SecurityGroupSearchResult, b: SecurityGroupSearchResult) => a.displayName.localeCompare(b.displayName));
 };
 
 /**

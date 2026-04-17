@@ -78,8 +78,8 @@ const ManageAssignments: React.FC = () => {
     }
 
     return (
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6 bg-white shadow-lg rounded-lg p-4 md:p-6 min-h-[600px]">
-            <div className="md:col-span-1 lg:col-span-1 border-r border-gray-100 pr-4">
+        <div className="flex gap-6 bg-white shadow-lg rounded-lg p-4 md:p-6 min-h-[600px]">
+            <div className="flex-none border-r border-gray-100 pr-4" style={{ minWidth: '400px' }}>
                 <RelationshipList 
                     relationships={relationships}
                     selectedRelationshipId={selectedRelationship?.id || null}
@@ -87,7 +87,7 @@ const ManageAssignments: React.FC = () => {
                     onRefresh={handleRefresh}
                 />
             </div>
-            <div className="md:col-span-2 lg:col-span-3">
+            <div className="flex-1 min-w-0">
                 <AssignmentEditor 
                     key={selectedRelationship?.id} 
                     relationship={selectedRelationship} 
