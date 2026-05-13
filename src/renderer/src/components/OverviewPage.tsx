@@ -26,6 +26,9 @@ function getGroupBaseName(displayName: string): string {
     return m ? m[1] : displayName;
 }
 
+const STANDARD_GROUPS = ['AdminAgents', 'HelpdeskAgents', 'SalesAgents'] as const;
+const STANDARD_GROUPS_LOWER = new Set(STANDARD_GROUPS.map(g => g.toLowerCase()));
+
 const OverviewPage: React.FC = () => {
     const [rows, setRows] = useState<RowData[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -104,6 +107,8 @@ const OverviewPage: React.FC = () => {
         const groupMap = new Map<string, string[]>();
         allGroupNames.forEach(name => {
             const base = getGroupBaseName(name);
+            // Standard agent groups are rendered as fixed last columns — skip here
+            if (STANDARD_GROUPS_LOWER.has(base.toLowerCase())) return;
             if (!groupMap.has(base)) groupMap.set(base, []);
             groupMap.get(base)!.push(name);
         });
@@ -120,7 +125,7 @@ const OverviewPage: React.FC = () => {
         return columnGroups.map(cg => ({ baseName: cg.baseName }));
     }, [columnGroups]);
 
-    const totalGroupCols = families.length;
+    const totalGroupCols = families.length + STANDARD_GROUPS.length;
 
     // ── Loading ──────────────────────────────────────────────────────────────
     if (isLoading) {
@@ -169,7 +174,7 @@ const OverviewPage: React.FC = () => {
             <div className="flex items-baseline gap-3 mb-4">
                 <h2 className="text-lg font-semibold text-gray-800">Assignment Overview</h2>
                 <span className="text-sm text-gray-500">
-                    {rows.length} relationships · {totalGroupCols} unique groups in {columnGroups.length} families
+                    {rows.length} relationships · {columnGroups.length} families + {STANDARD_GROUPS.length} standard groups
                 </span>
             </div>
 
@@ -203,6 +208,16 @@ const OverviewPage: React.FC = () => {
                                     <div className="max-w-[160px] truncate mx-auto">
                                         {family.baseName}
                                     </div>
+                                </th>
+                            ))}
+                            {/* Standard agent groups — fixed last 3 columns */}
+                            {STANDARD_GROUPS.map(sg => (
+                                <th
+                                    key={sg}
+                                    className="border border-amber-300 px-2 py-1.5 text-center font-semibold text-amber-900 bg-amber-50 whitespace-nowrap"
+                                    title={sg}
+                                >
+                                    <div className="max-w-[140px] truncate mx-auto">{sg}</div>
                                 </th>
                             ))}
                         </tr>
@@ -239,6 +254,27 @@ const OverviewPage: React.FC = () => {
                                                 <span className="text-rose-700 font-semibold">Missing</span>
                                             ) : (
                                                 <span className="text-green-800 font-medium whitespace-nowrap">{cellValue}</span>
+                                            )}
+                                        </td>
+                                    );
+                                })}
+                                {/* Standard agent group cells */}
+                                {STANDARD_GROUPS.map(sg => {
+                                    const found = [...row.groupNames].some(
+                                        n => n.toLowerCase() === sg.toLowerCase()
+                                    );
+                                    return (
+                                        <td
+                                            key={sg}
+                                            title={found ? sg : `Missing: ${sg}`}
+                                            className={`border border-amber-200 px-2 py-1.5 transition-colors ${
+                                                found ? 'bg-green-50' : 'bg-rose-50'
+                                            }`}
+                                        >
+                                            {found ? (
+                                                <span className="text-green-800 font-medium whitespace-nowrap">{sg}</span>
+                                            ) : (
+                                                <span className="text-rose-700 font-semibold">Missing</span>
                                             )}
                                         </td>
                                     );

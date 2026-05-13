@@ -28,7 +28,7 @@ const RelationshipList: React.FC<RelationshipListProps> = ({ relationships, sele
         return [...filtered].sort((a, b) => {
             const termDiff = isTerminated(a.status) - isTerminated(b.status);
             if (termDiff !== 0) return termDiff;
-            return a.displayName.localeCompare(b.displayName);
+            return a.displayName.localeCompare(b.displayName, 'de', { sensitivity: 'base' });
         });
     }, [relationships, filter]);
 

@@ -199,6 +199,12 @@ export const APP_CONFIG = {
         '11648597-926c-4cf3-9c36-bcebb0ba8dcc', // Power Platform Administrator
       ],
     },
+    CSCT_AZ_IT_Architect: {
+      roleIds: [
+        '88d8e3e3-8f55-4a1e-953a-9b9898b8876b', // Directory Readers
+        '194ae4cb-b126-40b2-bd5b-6091b380977d', // Security Administrator
+      ],
+    },
     CSCT_M365_Compliance: {
       roleIds: [
         'f2ef992c-3afb-46b9-b7cf-a126ee74c451', // Global Reader
