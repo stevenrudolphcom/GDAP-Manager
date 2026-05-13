@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 import GDAPRequestForm from '@/components/GDAPRequestForm';
 import AuthLayout from '@/components/AuthLayout';
 import ManageAssignments from '@/components/ManageAssignments';
+import OverviewPage from '@/components/OverviewPage';
 
-type View = 'create' | 'manage';
+type View = 'create' | 'manage' | 'overview';
 
 const App: React.FC = () => {
     const [activeView, setActiveView] = useState<View>('create');
@@ -12,6 +13,8 @@ const App: React.FC = () => {
         switch (activeView) {
             case 'manage':
                 return <ManageAssignments />;
+            case 'overview':
+                return <OverviewPage />;
             case 'create':
             default:
                 return <GDAPRequestForm />;
@@ -24,6 +27,11 @@ const App: React.FC = () => {
                 return {
                     title: 'Manage GDAP Assignments',
                     subtitle: 'View existing relationships and assign security groups to roles.'
+                };
+            case 'overview':
+                return {
+                    title: 'Assignment Overview',
+                    subtitle: 'Matrix view of all relationships and their assigned security groups.'
                 };
             case 'create':
             default:
@@ -56,6 +64,12 @@ const App: React.FC = () => {
                         className={`px-4 py-2 -mb-px text-sm font-medium border-b-2 ${activeView === 'manage' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
                     >
                         Manage Assignments
+                    </button>
+                    <button
+                        onClick={() => setActiveView('overview')}
+                        className={`px-4 py-2 -mb-px text-sm font-medium border-b-2 ${activeView === 'overview' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                    >
+                        Overview
                     </button>
                 </nav>
 

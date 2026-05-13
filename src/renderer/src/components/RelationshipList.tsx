@@ -7,9 +7,13 @@ interface RelationshipListProps {
     selectedRelationshipId: string | null;
     onSelectRelationship: (relationship: DelegatedAdminRelationship) => void;
     onRefresh: () => void;
+    assignmentCounts?: Record<string, number>;
+    isPreloading?: boolean;
+    preloadDone?: number;
+    preloadTotal?: number;
 }
 
-const RelationshipList: React.FC<RelationshipListProps> = ({ relationships, selectedRelationshipId, onSelectRelationship, onRefresh }) => {
+const RelationshipList: React.FC<RelationshipListProps> = ({ relationships, selectedRelationshipId, onSelectRelationship, onRefresh, assignmentCounts, isPreloading, preloadDone = 0, preloadTotal = 0 }) => {
     const [filter, setFilter] = useState('');
 
     const filteredRelationships = useMemo(() => {
@@ -42,10 +46,26 @@ const RelationshipList: React.FC<RelationshipListProps> = ({ relationships, sele
     
     return (
         <div className="flex flex-col h-full">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-2">
                  <h2 className="text-lg font-semibold text-gray-800">Relationships</h2>
                  <button onClick={onRefresh} className="text-sm text-indigo-600 hover:text-indigo-800 font-medium">Refresh</button>
             </div>
+            {isPreloading ? (
+                <div className="mb-3">
+                    <div className="flex justify-between text-xs text-gray-500 mb-1">
+                        <span>Loading assignment counts…</span>
+                        <span>{preloadDone} / {preloadTotal}</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+                        <div
+                            className="bg-indigo-500 h-1.5 rounded-full transition-all duration-300"
+                            style={{ width: preloadTotal > 0 ? `${(preloadDone / preloadTotal) * 100}%` : '0%' }}
+                        />
+                    </div>
+                </div>
+            ) : preloadTotal > 0 ? (
+                <div className="mb-3 h-4" />
+            ) : null}
             <div className="relative mb-4">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <SearchIcon className="h-5 w-5 text-gray-400" />
@@ -68,7 +88,12 @@ const RelationshipList: React.FC<RelationshipListProps> = ({ relationships, sele
                                     className={`w-full text-left p-3 rounded-lg transition-colors ${selectedRelationshipId === r.id ? 'bg-indigo-100 shadow' : 'hover:bg-gray-50'}`}
                                 >
                                     <div className="flex justify-between items-center">
-                                        <p className="font-semibold text-gray-900 truncate">{r.displayName}</p>
+                                        <p className="font-semibold text-gray-900 truncate">
+                                            {r.displayName}
+                                            {assignmentCounts?.[r.id] !== undefined && (
+                                                <span className="ml-1.5 text-xs font-normal text-gray-500">({assignmentCounts[r.id]})</span>
+                                            )}
+                                        </p>
                                         <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${getStatusColor(r.status)}`}>
                                             {r.status}
                                         </span>

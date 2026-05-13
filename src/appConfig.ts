@@ -194,6 +194,11 @@ export const APP_CONFIG = {
         '3d762c5a-1b6c-493f-843e-55a3b42923d4', // Teams Devices Administrator
       ],
     },
+    CSCT_M365_BusinessAutomation: {
+      roleIds: [
+        '11648597-926c-4cf3-9c36-bcebb0ba8dcc', // Power Platform Administrator
+      ],
+    },
     CSCT_M365_Compliance: {
       roleIds: [
         'f2ef992c-3afb-46b9-b7cf-a126ee74c451', // Global Reader

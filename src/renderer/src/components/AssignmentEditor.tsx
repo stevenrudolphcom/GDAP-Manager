@@ -22,6 +22,7 @@ interface AssignmentEditorProps {
     relationship: DelegatedAdminRelationship | null;
     getAccessToken: () => Promise<string>;
     onUpdateRelationship: (relationship: DelegatedAdminRelationship) => void;
+    onAssignmentsLoaded?: (relationshipId: string, count: number) => void;
 }
 
 const buildTemplateColor = (templateKey: string): string => {
@@ -413,7 +414,7 @@ const AssignmentForm: React.FC<{
     );
 };
 
-const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAccessToken, onUpdateRelationship }) => {
+const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAccessToken, onUpdateRelationship, onAssignmentsLoaded }) => {
     const [assignments, setAssignments] = useState<DelegatedAdminAccessAssignment[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [isUpdatingAutoExtend, setIsUpdatingAutoExtend] = useState(false);
@@ -452,6 +453,7 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
             const token = await getAccessToken();
             const data = await getGDAPAssignmentsWithGroupDisplayNames(relationship.id, token);
             setAssignments(data);
+            onAssignmentsLoaded?.(relationship.id, data.length);
         } catch (err: any) {
             setError(err.message || 'An error occurred.');
         } finally {

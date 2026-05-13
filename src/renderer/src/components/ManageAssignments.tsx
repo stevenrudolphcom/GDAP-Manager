@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { DelegatedAdminRelationship } from '../types';
-import { getGDAPRelationships } from '../services/graphService';
+import { getGDAPRelationships, getGDAPRelationshipAccessAssignments } from '../services/graphService';
 import RelationshipList from './RelationshipList';
 import AssignmentEditor from './AssignmentEditor';
 import SpinnerIcon from './icons/SpinnerIcon';
@@ -10,6 +10,10 @@ const ManageAssignments: React.FC = () => {
     const [selectedRelationship, setSelectedRelationship] = useState<DelegatedAdminRelationship | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [assignmentCounts, setAssignmentCounts] = useState<Record<string, number>>({});
+    const [isPreloading, setIsPreloading] = useState(false);
+    const [preloadDone, setPreloadDone] = useState(0);
+    const [preloadTotal, setPreloadTotal] = useState(0);
 
     const getAccessToken = useCallback(async () => {
         const response = await window.electronAPI.getToken();
@@ -18,6 +22,29 @@ const ManageAssignments: React.FC = () => {
         }
         return response.accessToken;
     }, []);
+
+    const preloadAssignmentCounts = useCallback(async (rels: DelegatedAdminRelationship[]) => {
+        if (rels.length === 0) return;
+        setIsPreloading(true);
+        setPreloadDone(0);
+        setPreloadTotal(rels.length);
+        setAssignmentCounts({});
+        const token = await getAccessToken();
+        rels.forEach(r => {
+            getGDAPRelationshipAccessAssignments(r.id, token)
+                .then(assignments => {
+                    setAssignmentCounts(prev => ({ ...prev, [r.id]: assignments.length }));
+                })
+                .catch(() => { /* Fehler beim Preload ignorieren */ })
+                .finally(() => {
+                    setPreloadDone(prev => {
+                        const next = prev + 1;
+                        if (next >= rels.length) setIsPreloading(false);
+                        return next;
+                    });
+                });
+        });
+    }, [getAccessToken]);
 
     const fetchRelationships = useCallback(async () => {
         setIsLoading(true);
@@ -32,12 +59,14 @@ const ManageAssignments: React.FC = () => {
                 const updated = data.find(r => r.id === selectedRelationship.id);
                 if (updated) setSelectedRelationship(updated);
             }
+
+            preloadAssignmentCounts(data);
         } catch (err: any) {
             setError(err.message || 'An error occurred while fetching relationships.');
         } finally {
             setIsLoading(false);
         }
-    }, [getAccessToken, selectedRelationship]);
+    }, [getAccessToken, selectedRelationship, preloadAssignmentCounts]);
 
     useEffect(() => {
         fetchRelationships();
@@ -52,6 +81,10 @@ const ManageAssignments: React.FC = () => {
         setRelationships(prev => prev.map(r => r.id === updated.id ? updated : r));
         setSelectedRelationship(updated);
     };
+
+    const handleAssignmentsLoaded = useCallback((relationshipId: string, count: number) => {
+        setAssignmentCounts(prev => ({ ...prev, [relationshipId]: count }));
+    }, []);
 
     if (isLoading && relationships.length === 0) {
         return (
@@ -85,6 +118,10 @@ const ManageAssignments: React.FC = () => {
                     selectedRelationshipId={selectedRelationship?.id || null}
                     onSelectRelationship={setSelectedRelationship}
                     onRefresh={handleRefresh}
+                    assignmentCounts={assignmentCounts}
+                    isPreloading={isPreloading}
+                    preloadDone={preloadDone}
+                    preloadTotal={preloadTotal}
                 />
             </div>
             <div className="flex-1 min-w-0">
@@ -93,6 +130,7 @@ const ManageAssignments: React.FC = () => {
                     relationship={selectedRelationship} 
                     getAccessToken={getAccessToken}
                     onUpdateRelationship={handleUpdateRelationship}
+                    onAssignmentsLoaded={handleAssignmentsLoaded}
                 />
             </div>
         </div>
