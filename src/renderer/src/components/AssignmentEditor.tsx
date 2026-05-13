@@ -22,8 +22,39 @@ interface AssignmentEditorProps {
     relationship: DelegatedAdminRelationship | null;
     getAccessToken: () => Promise<string>;
     onUpdateRelationship: (relationship: DelegatedAdminRelationship) => void;
-    onAssignmentsLoaded?: (relationshipId: string, count: number) => void;
+    onAssignmentsLoaded?: (relationshipId: string, count: number, groupNames?: string[]) => void;
+    allRelationshipGroupNames?: Record<string, string[]>;
 }
+
+const getGroupBaseName = (displayName: string): string => {
+    const m = displayName.match(/^(.*?)(-[A-Z]{1,4})$/i);
+    return m ? m[1] : displayName;
+};
+
+const belongsToFamily = (groupName: string, family: string): boolean => {
+    return groupName === family || groupName.startsWith(`${family}-`);
+};
+
+const extractRelationshipSuffix = (relationshipName: string): string | null => {
+    const m = relationshipName.match(/-([A-Za-z0-9]{1,8})$/);
+    return m ? m[1].toUpperCase() : null;
+};
+
+/**
+ * Microsoft's three built-in standard agent security groups that exist in every
+ * CSP partner tenant by default. They are created automatically by the Partner Center
+ * and are used to grant delegated admin privileges to partner users.
+ *
+ * - AdminAgents: Full admin access; previously mapped via DAP as Global Admin.
+ * - HelpdeskAgents: Helpdesk-level access; previously mapped via DAP as Helpdesk Admin.
+ * - SalesAgents: Sales/account management access; no direct tenant admin access.
+ *
+ * References:
+ *   https://learn.microsoft.com/en-us/partner-center/gdap-assign-azure-ad-roles
+ *   https://learn.microsoft.com/en-us/partner-center/permissions-overview
+ */
+const MICROSOFT_STANDARD_AGENT_GROUPS = ['AdminAgents', 'HelpdeskAgents', 'SalesAgents'] as const;
+const MICROSOFT_STANDARD_AGENT_GROUPS_LOWER = new Set(MICROSOFT_STANDARD_AGENT_GROUPS.map(g => g.toLowerCase()));
 
 const buildTemplateColor = (templateKey: string): string => {
     let hash = 0;
@@ -70,20 +101,24 @@ const AssignmentForm: React.FC<{
     getAccessToken: () => Promise<string>;
     allowedRoleIds?: string[];
     usedSecurityGroupIds?: string[];
-}> = ({ relationshipId, existingAssignment, onSave, onCancel, getAccessToken, allowedRoleIds, usedSecurityGroupIds = [] }) => {
+    prefillGroupDisplayName?: string;
+}> = ({ relationshipId, existingAssignment, onSave, onCancel, getAccessToken, allowedRoleIds, usedSecurityGroupIds = [], prefillGroupDisplayName }) => {
     const [securityGroupId, setSecurityGroupId] = useState(existingAssignment?.accessContainer.accessContainerId || '');
     const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>(existingAssignment?.accessDetails.unifiedRoles.map(r => r.roleDefinitionId) || []);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [templateWarning, setTemplateWarning] = useState<string | null>(null);
     const [appliedTemplateName, setAppliedTemplateName] = useState<string | null>(null);
-    const [groupSearchTerm, setGroupSearchTerm] = useState('');
+    const [groupSearchTerm, setGroupSearchTerm] = useState(prefillGroupDisplayName || '');
     const [groupOptions, setGroupOptions] = useState<SecurityGroupSearchResult[]>([]);
     const [selectedGroupDisplayName, setSelectedGroupDisplayName] = useState<string | null>(
         existingAssignment?.accessContainer.displayName || null
     );
     const [isSearchingGroups, setIsSearchingGroups] = useState(false);
     const [groupSearchError, setGroupSearchError] = useState<string | null>(null);
+    const [prefillSelectionApplied, setPrefillSelectionApplied] = useState(!prefillGroupDisplayName);
+    const [prefillFallbackTried, setPrefillFallbackTried] = useState(false);
+    const [lastCompletedSearchTerm, setLastCompletedSearchTerm] = useState<string | null>(null);
 
     const debouncedGroupSearchTerm = useDebounce(groupSearchTerm, 300);
     const sortedGroupOptions = useMemo(
@@ -94,6 +129,14 @@ const AssignmentForm: React.FC<{
         [groupOptions]
     );
     const usedSecurityGroupIdSet = useMemo(() => new Set(usedSecurityGroupIds), [usedSecurityGroupIds]);
+
+    useEffect(() => {
+        if (existingAssignment) return;
+        setGroupSearchTerm(prefillGroupDisplayName || '');
+        setPrefillSelectionApplied(!prefillGroupDisplayName);
+        setPrefillFallbackTried(false);
+        setLastCompletedSearchTerm(null);
+    }, [prefillGroupDisplayName, existingAssignment]);
 
     useEffect(() => {
         if (existingAssignment) return;
@@ -112,7 +155,10 @@ const AssignmentForm: React.FC<{
                 if (!isActive) return;
                 setGroupSearchError(err.message || 'Security groups could not be loaded.');
             } finally {
-                if (isActive) setIsSearchingGroups(false);
+                if (isActive) {
+                    setIsSearchingGroups(false);
+                    setLastCompletedSearchTerm(debouncedGroupSearchTerm);
+                }
             }
         };
 
@@ -130,6 +176,50 @@ const AssignmentForm: React.FC<{
         setGroupSearchError(null);
         autoApplyTemplateByGroupName(group.displayName);
     };
+
+    useEffect(() => {
+        if (existingAssignment || !prefillGroupDisplayName || prefillSelectionApplied) return;
+
+        const normalizedPrefill = prefillGroupDisplayName.toLowerCase();
+        const normalizedCurrentTerm = debouncedGroupSearchTerm.toLowerCase();
+
+        // Only evaluate auto-selection after the current search term has actually completed.
+        if (!lastCompletedSearchTerm || lastCompletedSearchTerm.toLowerCase() !== normalizedCurrentTerm) return;
+        if (isSearchingGroups) return;
+
+        const exact = sortedGroupOptions.find(g => (g.displayName || '').toLowerCase() === normalizedPrefill);
+        const startsWith = sortedGroupOptions.find(g => (g.displayName || '').toLowerCase().startsWith(normalizedPrefill));
+        const contains = sortedGroupOptions.find(g => (g.displayName || '').toLowerCase().includes(normalizedPrefill));
+        const fallbackBase = getGroupBaseName(prefillGroupDisplayName).toLowerCase();
+        const startsWithFallback = sortedGroupOptions.find(g => (g.displayName || '').toLowerCase().startsWith(fallbackBase));
+        const containsFallback = sortedGroupOptions.find(g => (g.displayName || '').toLowerCase().includes(fallbackBase));
+        const candidate = exact || startsWith || contains || startsWithFallback || containsFallback;
+
+        if (candidate) {
+            handleSelectGroup(candidate);
+            setPrefillSelectionApplied(true);
+        } else {
+            const canTryFallback = !prefillFallbackTried && fallbackBase !== normalizedPrefill;
+            if (canTryFallback) {
+                setPrefillFallbackTried(true);
+                setGroupSearchTerm(fallbackBase);
+                setGroupSearchError(`No exact match for "${prefillGroupDisplayName}". Trying broader search "${fallbackBase}"...`);
+                return;
+            }
+
+            setGroupSearchError(`No matching security group found for "${prefillGroupDisplayName}".`);
+            setPrefillSelectionApplied(true);
+        }
+    }, [
+        existingAssignment,
+        prefillGroupDisplayName,
+        prefillSelectionApplied,
+        prefillFallbackTried,
+        sortedGroupOptions,
+        debouncedGroupSearchTerm,
+        isSearchingGroups,
+        lastCompletedSearchTerm,
+    ]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -414,7 +504,7 @@ const AssignmentForm: React.FC<{
     );
 };
 
-const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAccessToken, onUpdateRelationship, onAssignmentsLoaded }) => {
+const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAccessToken, onUpdateRelationship, onAssignmentsLoaded, allRelationshipGroupNames = {} }) => {
     const [assignments, setAssignments] = useState<DelegatedAdminAccessAssignment[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [isUpdatingAutoExtend, setIsUpdatingAutoExtend] = useState(false);
@@ -422,6 +512,7 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
     const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
     const [editingAssignment, setEditingAssignment] = useState<DelegatedAdminAccessAssignment | null>(null);
     const [isCreating, setIsCreating] = useState(false);
+    const [prefillGroupName, setPrefillGroupName] = useState<string | null>(null);
     const [isProcessingId, setIsProcessingId] = useState<string | null>(null);
     const [expandedAssignmentId, setExpandedAssignmentId] = useState<string | null>(null);
     const [showDisableAutoExtendConfirm, setShowDisableAutoExtendConfirm] = useState(false);
@@ -439,6 +530,62 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
         [assignments]
     );
 
+    const assignedGroupNamesLower = useMemo(
+        () => new Set(
+            assignments
+                .map(a => a.accessContainer.displayName)
+                .filter((name): name is string => !!name && name !== 'Name not found')
+                .map(name => name.toLowerCase())
+        ),
+        [assignments]
+    );
+
+    const missingGroupSuggestions = useMemo(() => {
+        if (!relationship) return [];
+
+        const relationshipSuffix = extractRelationshipSuffix(relationship.displayName);
+        if (!relationshipSuffix) return [];
+
+        const allKnownGroupNames = Object.values(allRelationshipGroupNames)
+            .flat()
+            .filter(Boolean);
+        if (allKnownGroupNames.length === 0) return [];
+
+        const familyNames = [...new Set(allKnownGroupNames.map(getGroupBaseName))]
+            .sort((a, b) => a.localeCompare(b, 'de', { sensitivity: 'base' }));
+
+        const suggestions = familyNames
+            .map(family => {
+                const familyGroupNames = allKnownGroupNames
+                    .filter(name => belongsToFamily(name, family))
+                    .sort((a, b) => a.localeCompare(b, 'de', { sensitivity: 'base' }));
+                if (familyGroupNames.length === 0) return null;
+
+                if (MICROSOFT_STANDARD_AGENT_GROUPS_LOWER.has(family.toLowerCase())) return null;
+
+                const expectedSuffixName = `${family}-${relationshipSuffix}`;
+                const hasExpectedSuffixAssigned = assignedGroupNamesLower.has(expectedSuffixName.toLowerCase());
+                const hasUnsuffixedAssigned = assignedGroupNamesLower.has(family.toLowerCase());
+                if (hasExpectedSuffixAssigned || hasUnsuffixedAssigned) return null;
+
+                const unsuffixedName = familyGroupNames.find(
+                    name => name.toLowerCase() === family.toLowerCase()
+                );
+
+                // If an unsuffixed canonical group exists globally, suggest it;
+                // otherwise suggest the relationship-specific target name.
+                return unsuffixedName || expectedSuffixName;
+            })
+            .filter((name): name is string => !!name);
+
+        return [...new Set(suggestions)].sort((a, b) => a.localeCompare(b, 'de', { sensitivity: 'base' }));
+    }, [relationship, assignedGroupNamesLower, allRelationshipGroupNames]);
+
+    const missingStandardGroups = useMemo(
+        () => MICROSOFT_STANDARD_AGENT_GROUPS.filter(g => !assignedGroupNamesLower.has(g.toLowerCase())),
+        [assignedGroupNamesLower]
+    );
+
     const allowedRoleIds = useMemo(() => {
         if (!relationship?.accessDetails?.unifiedRoles) return undefined;
         return relationship.accessDetails.unifiedRoles.map(r => r.roleDefinitionId);
@@ -453,7 +600,10 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
             const token = await getAccessToken();
             const data = await getGDAPAssignmentsWithGroupDisplayNames(relationship.id, token);
             setAssignments(data);
-            onAssignmentsLoaded?.(relationship.id, data.length);
+            const groupNames = data
+                .map(a => a.accessContainer.displayName)
+                .filter((name): name is string => !!name && name !== 'Name not found');
+            onAssignmentsLoaded?.(relationship.id, data.length, groupNames);
         } catch (err: any) {
             setError(err.message || 'An error occurred.');
         } finally {
@@ -527,6 +677,12 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
         } finally {
             setIsProcessingId(null);
         }
+    };
+
+    const handleCreateAssignment = (groupName?: string) => {
+        setEditingAssignment(null);
+        setPrefillGroupName(groupName || null);
+        setIsCreating(true);
     };
     
     if (!relationship) {
@@ -636,7 +792,7 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
                         <div className="flex items-center space-x-2">
                             <button onClick={fetchAssignments} title="Refresh Assignments" className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-all active:scale-90"><svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 4v5h5M20 20v-5h-5M4 4a14.95 14.95 0 0113.433 4.805M20 20a14.95 14.95 0 01-13.433-4.805" /></svg></button>
                             {canHaveAssignments && (
-                                <button onClick={() => { setIsCreating(true); setEditingAssignment(null); }} disabled={isCreating} className="px-4 py-2 text-sm font-black text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-100 transition-all active:scale-95 disabled:opacity-50">New Assignment</button>
+                                <button onClick={() => handleCreateAssignment()} disabled={isCreating} className="px-4 py-2 text-sm font-black text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-100 transition-all active:scale-95 disabled:opacity-50">New Assignment</button>
                             )}
                         </div>
                     </div>
@@ -647,10 +803,86 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
                             Assignments can only be managed on active relationships. Status: {relationship.status.toUpperCase()}
                         </div>
                     )}
+
+                    {canHaveAssignments && (missingGroupSuggestions.length > 0 || missingStandardGroups.length > 0) && (
+                        <div className="p-4 bg-white border border-gray-200 rounded-2xl space-y-4">
+                            <div className="flex items-center gap-2">
+                                <h4 className="text-sm font-black text-gray-900 uppercase tracking-wider">Missing Groups</h4>
+                                <span
+                                    className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-gray-300 text-[10px] font-black text-gray-600 cursor-help"
+                                    title="This section combines missing family-based groups (red) and missing Microsoft standard agent groups (yellow)."
+                                >
+                                    i
+                                </span>
+                            </div>
+
+                            {missingGroupSuggestions.length > 0 && (
+                                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <span className="text-xs font-black text-rose-800 uppercase tracking-wider">Missing Groups for this Relationship</span>
+                                        <span
+                                            className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-rose-300 text-[9px] font-black text-rose-700 cursor-help"
+                                            title="Based on group families and the relationship suffix; Microsoft standard groups are excluded here to avoid duplicates."
+                                        >
+                                            i
+                                        </span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {missingGroupSuggestions.map(groupName => (
+                                            <button
+                                                key={groupName}
+                                                type="button"
+                                                onClick={() => handleCreateAssignment(groupName)}
+                                                title="Create new assignment using this group name"
+                                                className="px-2.5 py-1 text-xs font-bold bg-white text-rose-700 border border-rose-200 rounded-lg hover:bg-rose-100 transition-colors"
+                                            >
+                                                {groupName}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {missingStandardGroups.length > 0 && (
+                                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <span className="text-xs font-black text-amber-800 uppercase tracking-wider">Missing Standard Agent Groups</span>
+                                        <span
+                                            className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-amber-300 text-[9px] font-black text-amber-700 cursor-help"
+                                            title="Microsoft built-in standard groups in CSP partner tenants: AdminAgents, HelpdeskAgents, SalesAgents."
+                                        >
+                                            i
+                                        </span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {missingStandardGroups.map(groupName => (
+                                            <button
+                                                key={groupName}
+                                                type="button"
+                                                onClick={() => handleCreateAssignment(groupName)}
+                                                title="Create new assignment using this standard group"
+                                                className="px-2.5 py-1 text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300 rounded-lg hover:bg-amber-200 transition-colors"
+                                            >
+                                                {groupName}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
                     
                     {isCreating && (
                         <div className="animate-in fade-in slide-in-from-top-4 duration-300">
-                            <AssignmentForm relationshipId={relationship.id} onSave={() => { setIsCreating(false); fetchAssignments(); }} onCancel={() => setIsCreating(false)} getAccessToken={getAccessToken} allowedRoleIds={allowedRoleIds} usedSecurityGroupIds={usedSecurityGroupIds} />
+                            <AssignmentForm
+                                relationshipId={relationship.id}
+                                onSave={() => { setIsCreating(false); setPrefillGroupName(null); fetchAssignments(); }}
+                                onCancel={() => { setIsCreating(false); setPrefillGroupName(null); }}
+                                getAccessToken={getAccessToken}
+                                allowedRoleIds={allowedRoleIds}
+                                usedSecurityGroupIds={usedSecurityGroupIds}
+                                prefillGroupDisplayName={prefillGroupName || undefined}
+                            />
                         </div>
                     )}
 
@@ -675,7 +907,7 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
                                             </div>
                                         </div>
                                         <div className="flex space-x-2 flex-shrink-0 self-end sm:self-center">
-                                            <button onClick={() => { setEditingAssignment(a); setIsCreating(false); }} disabled={isProcessingId === a.id} className="text-sm px-4 py-2 font-black text-indigo-600 bg-indigo-50 rounded-xl hover:bg-indigo-100 transition-all active:scale-95">Edit</button>
+                                            <button onClick={() => { setEditingAssignment(a); setIsCreating(false); setPrefillGroupName(null); }} disabled={isProcessingId === a.id} className="text-sm px-4 py-2 font-black text-indigo-600 bg-indigo-50 rounded-xl hover:bg-indigo-100 transition-all active:scale-95">Edit</button>
                                             <button onClick={() => handleRemoveAssignment(a)} disabled={isProcessingId === a.id} className="text-sm px-4 py-2 font-black text-red-600 bg-red-50 rounded-xl hover:bg-red-100 transition-all active:scale-95">
                                                 {isProcessingId === a.id ? <SpinnerIcon className="animate-spin h-4 w-4" /> : 'Remove'}
                                             </button>

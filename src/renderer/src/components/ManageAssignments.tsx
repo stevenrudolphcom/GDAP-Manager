@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { DelegatedAdminRelationship } from '../types';
-import { getGDAPRelationships, getGDAPRelationshipAccessAssignments } from '../services/graphService';
+import { getGDAPRelationships, getGDAPAssignmentsWithGroupDisplayNames } from '../services/graphService';
 import RelationshipList from './RelationshipList';
 import AssignmentEditor from './AssignmentEditor';
 import SpinnerIcon from './icons/SpinnerIcon';
@@ -11,6 +11,7 @@ const ManageAssignments: React.FC = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [assignmentCounts, setAssignmentCounts] = useState<Record<string, number>>({});
+    const [relationshipGroupNames, setRelationshipGroupNames] = useState<Record<string, string[]>>({});
     const [isPreloading, setIsPreloading] = useState(false);
     const [preloadDone, setPreloadDone] = useState(0);
     const [preloadTotal, setPreloadTotal] = useState(0);
@@ -23,17 +24,22 @@ const ManageAssignments: React.FC = () => {
         return response.accessToken;
     }, []);
 
-    const preloadAssignmentCounts = useCallback(async (rels: DelegatedAdminRelationship[]) => {
+    const preloadRelationshipData = useCallback(async (rels: DelegatedAdminRelationship[]) => {
         if (rels.length === 0) return;
         setIsPreloading(true);
         setPreloadDone(0);
         setPreloadTotal(rels.length);
         setAssignmentCounts({});
+        setRelationshipGroupNames({});
         const token = await getAccessToken();
         rels.forEach(r => {
-            getGDAPRelationshipAccessAssignments(r.id, token)
+            getGDAPAssignmentsWithGroupDisplayNames(r.id, token)
                 .then(assignments => {
                     setAssignmentCounts(prev => ({ ...prev, [r.id]: assignments.length }));
+                    const groupNames = assignments
+                        .map(a => a.accessContainer.displayName)
+                        .filter((name): name is string => !!name && name !== 'Name not found');
+                    setRelationshipGroupNames(prev => ({ ...prev, [r.id]: groupNames }));
                 })
                 .catch(() => { /* Fehler beim Preload ignorieren */ })
                 .finally(() => {
@@ -60,13 +66,13 @@ const ManageAssignments: React.FC = () => {
                 if (updated) setSelectedRelationship(updated);
             }
 
-            preloadAssignmentCounts(data);
+            preloadRelationshipData(data);
         } catch (err: any) {
             setError(err.message || 'An error occurred while fetching relationships.');
         } finally {
             setIsLoading(false);
         }
-    }, [getAccessToken, selectedRelationship, preloadAssignmentCounts]);
+    }, [getAccessToken, selectedRelationship, preloadRelationshipData]);
 
     useEffect(() => {
         fetchRelationships();
@@ -82,8 +88,11 @@ const ManageAssignments: React.FC = () => {
         setSelectedRelationship(updated);
     };
 
-    const handleAssignmentsLoaded = useCallback((relationshipId: string, count: number) => {
+    const handleAssignmentsLoaded = useCallback((relationshipId: string, count: number, groupNames?: string[]) => {
         setAssignmentCounts(prev => ({ ...prev, [relationshipId]: count }));
+        if (groupNames) {
+            setRelationshipGroupNames(prev => ({ ...prev, [relationshipId]: groupNames }));
+        }
     }, []);
 
     if (isLoading && relationships.length === 0) {
@@ -131,6 +140,7 @@ const ManageAssignments: React.FC = () => {
                     getAccessToken={getAccessToken}
                     onUpdateRelationship={handleUpdateRelationship}
                     onAssignmentsLoaded={handleAssignmentsLoaded}
+                    allRelationshipGroupNames={relationshipGroupNames}
                 />
             </div>
         </div>
