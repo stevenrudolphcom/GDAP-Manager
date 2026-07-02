@@ -1,1 +1,5 @@
 node_modules
+.electron-cache
+out
+release
+*.tsbuildinfo

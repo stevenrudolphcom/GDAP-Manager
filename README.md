@@ -7,6 +7,15 @@ This app runs with delegated user permissions and needs that the user has Admin 
 PLEASE NOTE: This app is only tested on Windows, but should run and build package on Mac and Linux too, but Mac and Linux has not been tested!
 
 ## Changelog:
+2.7.2026
+- **Major dependency upgrade** (all tested: build, type-check, dev and packaged build): React 19, TypeScript 6, Tailwind CSS 4, electron-vite 5, @vitejs/plugin-react 5.2, @azure/msal-node 5 (+ msal-node-extensions 5) and Electron 43.
+  - Note: Vite stays on 7 on purpose – electron-vite 5 does not yet support Vite 8, and @vitejs/plugin-react 6 requires Vite 8.
+  - Tailwind 4: PostCSS now uses `@tailwindcss/postcss`; `src/renderer/src/styles.css` uses `@import "tailwindcss"` + `@source` directives instead of the old `@tailwind` directives.
+- **Automatic Electron self-repair.** `npm install`, `npm run dev` and the `package:*` commands now run a guard (`scripts/ensure-electron.mjs`) that automatically fixes the `Error: Electron uninstall` problem (common on network drives such as `Z:\`). No manual steps required anymore.
+- Added `npm run fix:electron` (and `fix:electron:force`) to repair the Electron binary manually if ever needed.
+- Added `npm run typecheck` for real TypeScript type-checking (the normal build uses esbuild, which does not type-check).
+- Added `npm run clean:full` / `npm run clean:preview` to remove all generated artifacts for a clean reinstall.
+
 5.1.2026
 - Updated so userdefined variables are easily changeable in one file /src/appConfig.ts and not in several different files.
 - Relantionship enddate is visible and autorenew is now toggleable on/off.
@@ -70,15 +79,19 @@ npm install
 
 This will download Electron and all other necessary packages, that are listed below with their version number (same as in package.json)
 
-**azure/msal-node": "3.8.1"** - Basic MSAL authentication library
+**azure/msal-node": "5.0.0"** - Basic MSAL authentication library
 
-**azure/msal-node-extensions": "1.5.24"** - Advanced MSAL authentication library, used for encrypting the token. DPAPI on Windows, Keychain on macOS, and libsecret on Linux.
+**azure/msal-node-extensions": "5.0.0"** - Advanced MSAL authentication library, used for encrypting the token. DPAPI on Windows, Keychain on macOS, and libsecret on Linux.
 
 **electron-toolkit/utils": "4.0.0"** - Electron-app packaging.
 
-**types/react": "18.3.3"** - The main library for building user interface.
+**types/react": "19.2.0"** - The main library for building user interface.
 
-**types/react-dom": "18.3.0"** - The "renderer" for React. It's the bridge that connects React components to the actual browser environment.
+**types/react-dom": "19.2.0"** - The "renderer" for React. It's the bridge that connects React components to the actual browser environment.
+
+**electron": "43.0.0"** - The desktop runtime. **electron-vite": "5.0.0"** and **vite": "7.x"** build the app. See `package.json` for the full, authoritative version list.
+
+> Note: After `npm install`, a post-install step automatically ensures the Electron binary is complete (see "Maintenance & Troubleshooting" below). This prevents the `Error: Electron uninstall` problem on network drives.
 
 ### Step 2: Run in Development Mode
 
@@ -107,3 +120,41 @@ and for linux:
 **npm run package:linux**
 
 Please note, you need to run these on their corresponding OS. ie. only build Win version on Win computer, Linux on Linux and MacOS on MacOS.
+
+## Maintenance & Troubleshooting
+
+### `Error: Electron uninstall` (automatic repair)
+
+On network drives (for example `Z:\`), the Electron binary sometimes does not unpack correctly during `npm install`, which makes `npm run dev` fail with `Error: Electron uninstall` (`node_modules/electron/path.txt` is empty and `electron.exe` is missing).
+
+This is now handled **automatically**: a small cross-platform guard (`scripts/ensure-electron.mjs`) runs as part of `postinstall`, `predev` and the `package:*` commands. It quickly checks the Electron binary and, only if it is broken, repairs it (on Windows via `Fix-Electron.ps1`, which unpacks the cached ZIP natively with `Expand-Archive`; on macOS/Linux via Electron's standard installer). If everything is fine, it exits instantly.
+
+If you ever need to trigger it manually:
+
+```bash
+npm run fix:electron        # repair only if broken
+npm run fix:electron:force  # force a fresh unpack of the Electron binary
+```
+
+For background and a detailed manual procedure, see `TROUBLESHOOTING-Electron-uninstall.md`.
+
+> The most reliable long-term fix is to keep the project on a **local drive** (e.g. `C:\`) instead of a mapped network drive.
+
+### Type checking
+
+The normal build uses esbuild, which transpiles without checking types. To run a real TypeScript type-check of both the renderer and the main process:
+
+```bash
+npm run typecheck
+```
+
+### Cleaning the project for a fresh install
+
+To return the folder to a clean-clone state (so you can test the full rollout), use:
+
+```bash
+npm run clean:preview   # dry run: shows what would be deleted, deletes nothing
+npm run clean:full      # deletes generated artifacts
+```
+
+This removes only regenerable items: `node_modules/`, `.electron-cache/`, `out/`, `release/` and `*.tsbuildinfo`. Source code, configuration, `package.json` / `package-lock.json` and the helper scripts are kept. Afterwards run `npm install` and then `npm run dev` or `npm run package:win`.

@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "moduleResolution": "Bundler"
+  },
+  "references": [],
+  "include": ["src/renderer/src", "src/renderer/preload.d.ts"]
+}

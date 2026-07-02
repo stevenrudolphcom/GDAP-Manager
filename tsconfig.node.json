@@ -1,9 +1,9 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "composite": true,
-    "module": "CommonJS",
+    "module": "node16",
+    "moduleResolution": "node16",
     "types": ["node"]
   },
-  "include": ["src/main/index.ts", "src/preload/index.ts"]
+  "include": ["src/main/index.ts", "src/preload/index.ts", "src/appConfig.ts"]
 }

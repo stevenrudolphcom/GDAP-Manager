@@ -2,6 +2,8 @@
 // It is referenced in tsconfig.json to make these types globally available
 // in your React components.
 
+/// <reference types="vite/client" />
+
 declare global {
     interface Window {
         electronAPI: {
