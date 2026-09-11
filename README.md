@@ -7,8 +7,11 @@ This app runs with delegated user permissions and needs that the user has Admin 
 PLEASE NOTE: This app is only tested on Windows, but should run and build package on Mac and Linux too, but Mac and Linux has not been tested!
 
 ## Changelog:
+11.9.2026
+- Updated dependency documentation to the currently installed package-lock versions for app version 1.6.0.
+
 2.7.2026
-- **Major dependency upgrade** (all tested: build, type-check, dev and packaged build): React 19, TypeScript 6, Tailwind CSS 4, electron-vite 5, @vitejs/plugin-react 5.2, @azure/msal-node 5 (+ msal-node-extensions 5) and Electron 43.
+- **Major dependency upgrade** (all tested: build, type-check, dev and packaged build): React 19.2.7, React DOM 19.2.7, TypeScript 6.0.3, Tailwind CSS 4.3.2, electron-vite 5.0.0, @vitejs/plugin-react 5.2.0, @azure/msal-node 5.3.1 (+ @azure/msal-node-extensions 5.3.1) and Electron 43.0.0.
   - Note: Vite stays on 7 on purpose – electron-vite 5 does not yet support Vite 8, and @vitejs/plugin-react 6 requires Vite 8.
   - Tailwind 4: PostCSS now uses `@tailwindcss/postcss`; `src/renderer/src/styles.css` uses `@import "tailwindcss"` + `@source` directives instead of the old `@tailwind` directives.
 - **Automatic Electron self-repair.** `npm install`, `npm run dev` and the `package:*` commands now run a guard (`scripts/ensure-electron.mjs`) that automatically fixes the `Error: Electron uninstall` problem (common on network drives such as `Z:\`). No manual steps required anymore.
@@ -77,19 +80,26 @@ Open your terminal or command prompt, navigate to the project's root directory (
 npm install
 ```
 
-This will download Electron and all other necessary packages, that are listed below with their version number (same as in package.json)
+This will download Electron and all other necessary packages. The currently installed core versions are locked in `package-lock.json`:
 
-**azure/msal-node": "5.0.0"** - Basic MSAL authentication library
-
-**azure/msal-node-extensions": "5.0.0"** - Advanced MSAL authentication library, used for encrypting the token. DPAPI on Windows, Keychain on macOS, and libsecret on Linux.
-
-**electron-toolkit/utils": "4.0.0"** - Electron-app packaging.
-
-**types/react": "19.2.0"** - The main library for building user interface.
-
-**types/react-dom": "19.2.0"** - The "renderer" for React. It's the bridge that connects React components to the actual browser environment.
-
-**electron": "43.0.0"** - The desktop runtime. **electron-vite": "5.0.0"** and **vite": "7.x"** build the app. See `package.json` for the full, authoritative version list.
+| Package | Installed version | Purpose |
+| --- | ---: | --- |
+| `@azure/msal-node` | `5.3.1` | Basic MSAL authentication library. |
+| `@azure/msal-node-extensions` | `5.3.1` | Encrypted token cache via DPAPI on Windows, Keychain on macOS and libsecret on Linux. |
+| `@electron-toolkit/utils` | `4.0.0` | Electron utility helpers. |
+| `electron` | `43.0.0` | Desktop runtime. |
+| `electron-builder` | `26.15.3` | Application packaging and installer generation. |
+| `electron-vite` | `5.0.0` | Electron build/dev tooling. |
+| `vite` | `7.3.6` | Renderer build tooling. |
+| `@vitejs/plugin-react` | `5.2.0` | React support for Vite. |
+| `react` | `19.2.7` | Main UI library. |
+| `react-dom` | `19.2.7` | React renderer for the browser environment. |
+| `@types/react` | `19.2.17` | TypeScript definitions for React. |
+| `@types/react-dom` | `19.2.3` | TypeScript definitions for React DOM. |
+| `typescript` | `6.0.3` | Type checking and TypeScript compiler. |
+| `tailwindcss` | `4.3.2` | Utility-first CSS framework. |
+| `@tailwindcss/postcss` | `4.3.2` | Tailwind CSS 4 PostCSS integration. |
+| `postcss` | `8.5.16` | CSS processing pipeline. |
 
 > Note: After `npm install`, a post-install step automatically ensures the Electron binary is complete (see "Maintenance & Troubleshooting" below). This prevents the `Error: Electron uninstall` problem on network drives.
 
