@@ -28,6 +28,8 @@ export interface DelegatedAdminRelationship {
     customer: {
         tenantId: string;
         displayName: string;
+        defaultDomainName?: string;
+        onMicrosoftDomainName?: string;
     };
     accessDetails?: {
         unifiedRoles: {

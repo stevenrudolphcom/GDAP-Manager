@@ -28,7 +28,11 @@ const AAD_APP_TENANT_ID = APP_CONFIG.AAD_APP_TENANT_ID;
 let mainWindow: BrowserWindow | null = null;
 let pca: PublicClientApplication | undefined;
 let cachedAccessToken: { accessToken: string; expiresAt: number } | null = null;
+let cachedTenantAccessTokens = new Map<string, { accessToken: string; expiresAt: number }>();
+let cachedPartnerCenterAccessToken: { accessToken: string; expiresAt: number } | null = null;
 let pendingAccessTokenRequest: Promise<{ accessToken: string } | null> | null = null;
+let pendingTenantAccessTokenRequests = new Map<string, Promise<{ accessToken: string } | null>>();
+let pendingPartnerCenterAccessTokenRequest: Promise<{ accessToken: string } | null> | null = null;
 
 const scopes = [
   'openid',
@@ -36,8 +40,28 @@ const scopes = [
   'offline_access',
   'User.Read',
   'DelegatedAdminRelationship.ReadWrite.All',
+  'Domain.Read.All',
   'Group.Read.All',
 ];
+
+const customerTenantScopes = [
+  'openid',
+  'profile',
+  'offline_access',
+  'User.Read',
+  'Domain.Read.All',
+];
+
+const partnerCenterScopes = ['https://api.partnercenter.microsoft.com/user_impersonation'];
+
+interface PartnerCenterCompanyProfile {
+  tenantId?: string;
+  domain?: string;
+}
+
+function isOnMicrosoftDomain(domainName: string | undefined): domainName is string {
+  return !!domainName && domainName.toLowerCase().endsWith('.onmicrosoft.com');
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -129,6 +153,62 @@ async function getFirstAccount(msal: PublicClientApplication): Promise<AccountIn
   return accounts.length > 0 ? accounts[0] : null;
 }
 
+async function getPartnerCenterAccessToken(): Promise<{ accessToken: string } | null> {
+  if (cachedPartnerCenterAccessToken && Date.now() < cachedPartnerCenterAccessToken.expiresAt - 60_000) {
+    return { accessToken: cachedPartnerCenterAccessToken.accessToken };
+  }
+
+  if (pendingPartnerCenterAccessTokenRequest) {
+    return pendingPartnerCenterAccessTokenRequest;
+  }
+
+  pendingPartnerCenterAccessTokenRequest = (async () => {
+    try {
+      const msal = getMsal();
+      let account = await getFirstAccount(msal);
+      if (!account) {
+        const interactive = await msal.acquireTokenInteractive({
+          scopes: partnerCenterScopes,
+          openBrowser: async (url: string) => {
+            await shell.openExternal(url);
+          },
+        });
+        account = interactive.account ?? null;
+        if (!account) return null;
+      }
+
+      let authResult: AuthenticationResult | null = null;
+      try {
+        authResult = await msal.acquireTokenSilent({ account, scopes: partnerCenterScopes });
+      } catch {
+        authResult = await msal.acquireTokenInteractive({
+          scopes: partnerCenterScopes,
+          openBrowser: async (url: string) => {
+            await shell.openExternal(url);
+          },
+        });
+      }
+
+      if (authResult?.accessToken) {
+        cachedPartnerCenterAccessToken = {
+          accessToken: authResult.accessToken,
+          expiresAt: authResult.expiresOn?.getTime() ?? Date.now() + 45 * 60 * 1000,
+        };
+        return { accessToken: authResult.accessToken };
+      }
+
+      return null;
+    } catch (error: any) {
+      console.warn('Unable to acquire Partner Center token:', error?.message || error);
+      return null;
+    } finally {
+      pendingPartnerCenterAccessTokenRequest = null;
+    }
+  })();
+
+  return pendingPartnerCenterAccessTokenRequest;
+}
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -193,7 +273,11 @@ ipcMain.handle('logout', async () => {
   try {
     const msal = getMsal();
     cachedAccessToken = null;
+    cachedTenantAccessTokens = new Map<string, { accessToken: string; expiresAt: number }>();
+    cachedPartnerCenterAccessToken = null;
     pendingAccessTokenRequest = null;
+    pendingTenantAccessTokenRequests = new Map<string, Promise<{ accessToken: string } | null>>();
+    pendingPartnerCenterAccessTokenRequest = null;
     const accounts = await msal.getTokenCache().getAllAccounts();
     for (const acc of accounts) {
       await msal.getTokenCache().removeAccount(acc);
@@ -263,6 +347,105 @@ ipcMain.handle('get-token', async (): Promise<{ accessToken: string } | null> =>
   })();
 
   return pendingAccessTokenRequest;
+});
+
+ipcMain.handle('get-token-for-tenant', async (_event, tenantId: string): Promise<{ accessToken: string } | null> => {
+  const normalizedTenantId = tenantId.trim().toLowerCase();
+  if (!normalizedTenantId) return null;
+
+  const cachedTenantToken = cachedTenantAccessTokens.get(normalizedTenantId);
+  if (cachedTenantToken && Date.now() < cachedTenantToken.expiresAt - 60_000) {
+    return { accessToken: cachedTenantToken.accessToken };
+  }
+
+  const pendingTenantToken = pendingTenantAccessTokenRequests.get(normalizedTenantId);
+  if (pendingTenantToken) {
+    return pendingTenantToken;
+  }
+
+  const request = (async () => {
+    try {
+      const msal = getMsal();
+      const account = await getFirstAccount(msal);
+      if (!account) return null;
+
+      const authority = `https://login.microsoftonline.com/${normalizedTenantId}`;
+      let authResult: AuthenticationResult | null = null;
+      try {
+        authResult = await msal.acquireTokenSilent({ account, scopes: customerTenantScopes, authority });
+      } catch {
+        authResult = await msal.acquireTokenInteractive({
+          scopes: customerTenantScopes,
+          authority,
+          openBrowser: async (url: string) => {
+            await shell.openExternal(url);
+          },
+        });
+      }
+
+      if (authResult?.accessToken && authResult.tenantId?.toLowerCase() === normalizedTenantId) {
+        cachedTenantAccessTokens.set(normalizedTenantId, {
+          accessToken: authResult.accessToken,
+          expiresAt: authResult.expiresOn?.getTime() ?? Date.now() + 45 * 60 * 1000,
+        });
+        return { accessToken: authResult.accessToken };
+      }
+
+      if (authResult?.accessToken) {
+        console.warn(`Token tenant mismatch. Requested ${normalizedTenantId}, received ${authResult.tenantId || 'unknown'}.`);
+      }
+
+      return null;
+    } catch (error: any) {
+      console.warn(`Unable to acquire token for customer tenant ${normalizedTenantId}:`, error?.message || error);
+      return null;
+    } finally {
+      pendingTenantAccessTokenRequests.delete(normalizedTenantId);
+    }
+  })();
+
+  pendingTenantAccessTokenRequests.set(normalizedTenantId, request);
+  return request;
+});
+
+ipcMain.handle('get-customer-default-namespace', async (_event, tenantId: string): Promise<{ namespace: string | null; error?: string }> => {
+  const normalizedTenantId = tenantId.trim().toLowerCase();
+  if (!normalizedTenantId) return { namespace: null, error: 'Tenant ID is empty.' };
+
+  const token = await getPartnerCenterAccessToken();
+  if (!token?.accessToken) {
+    return { namespace: null, error: 'Partner Center token could not be acquired.' };
+  }
+
+  try {
+    const response = await fetch(`https://api.partnercenter.microsoft.com/v1/customers/${normalizedTenantId}/profiles/company`, {
+      headers: {
+        Authorization: `Bearer ${token.accessToken}`,
+        Accept: 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      let details = '';
+      try {
+        details = await response.text();
+      } catch { }
+      return { namespace: null, error: `Partner Center returned ${response.status}${details ? `: ${details}` : ''}` };
+    }
+
+    const companyProfile: PartnerCenterCompanyProfile = await response.json();
+    if (companyProfile.tenantId?.toLowerCase() !== normalizedTenantId) {
+      return { namespace: null, error: `Partner Center returned tenant ${companyProfile.tenantId || 'unknown'} instead of ${normalizedTenantId}.` };
+    }
+
+    if (!isOnMicrosoftDomain(companyProfile.domain)) {
+      return { namespace: null, error: `Partner Center returned no *.onmicrosoft.com namespace.` };
+    }
+
+    return { namespace: companyProfile.domain };
+  } catch (error: any) {
+    return { namespace: null, error: error?.message || 'Partner Center namespace lookup failed.' };
+  }
 });
 
 ipcMain.handle('get-account', async () => {

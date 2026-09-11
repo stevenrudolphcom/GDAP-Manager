@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   login: () => ipcRenderer.invoke('login'),
   logout: () => ipcRenderer.invoke('logout'),
   getToken: () => ipcRenderer.invoke('get-token'),
+  getTokenForTenant: (tenantId: string) => ipcRenderer.invoke('get-token-for-tenant', tenantId),
+  getCustomerDefaultNamespace: (tenantId: string) => ipcRenderer.invoke('get-customer-default-namespace', tenantId),
   getAccount: () => ipcRenderer.invoke('get-account'),
   loadDefaultRoles: () => ipcRenderer.invoke('load-default-roles'),
   saveDefaultRoles: (roleIds: string[]) => ipcRenderer.invoke('save-default-roles', roleIds),

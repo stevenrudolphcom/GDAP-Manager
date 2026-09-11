@@ -19,6 +19,16 @@ export interface GDAPSnapshotProgress {
   message: string;
 }
 
+interface DomainInformation {
+  id?: string;
+  isInitial?: boolean;
+  isVerified?: boolean;
+}
+
+function isInitialMicrosoftDomain(domainName: string | undefined): domainName is string {
+  return !!domainName && domainName.toLowerCase().endsWith('.onmicrosoft.com');
+}
+
 let gdapSnapshotCache = new Map<string, GDAPRelationshipsSnapshot>();
 let gdapSnapshotPromises = new Map<string, Promise<GDAPRelationshipsSnapshot>>();
 
@@ -149,7 +159,10 @@ const cloneAssignment = (assignment: DelegatedAdminAccessAssignment): DelegatedA
 });
 
 const cloneSnapshot = (snapshot: GDAPRelationshipsSnapshot): GDAPRelationshipsSnapshot => ({
-  relationships: snapshot.relationships.map((relationship) => ({ ...relationship })),
+  relationships: snapshot.relationships.map((relationship) => ({
+    ...relationship,
+    customer: { ...relationship.customer },
+  })),
   assignmentsByRelationshipId: Object.fromEntries(
     Object.entries(snapshot.assignmentsByRelationshipId).map(([relationshipId, assignments]) => [
       relationshipId,
@@ -339,6 +352,34 @@ const buildSnapshot = async (
     assignmentsByRelationshipId,
     groupNamesByRelationshipId,
   };
+};
+
+export const getTenantOnMicrosoftDomain = async (
+  tenantId: string,
+  _partnerAccessToken: string
+): Promise<string | null> => {
+  const partnerCenterNamespace = await window.electronAPI.getCustomerDefaultNamespace(tenantId);
+  if (isInitialMicrosoftDomain(partnerCenterNamespace.namespace || undefined)) {
+    return partnerCenterNamespace.namespace;
+  }
+
+  if (partnerCenterNamespace.error) {
+    console.warn(`Partner Center namespace lookup failed for tenant ${tenantId}: ${partnerCenterNamespace.error}`);
+  }
+
+  const customerToken = await window.electronAPI.getTokenForTenant(tenantId);
+  if (!customerToken?.accessToken) return null;
+
+  const domainsResponse = await callGraphApi(
+    customerToken.accessToken,
+    'https://graph.microsoft.com/v1.0/domains?$select=id,isInitial,isVerified'
+  );
+  const domains: DomainInformation[] = Array.isArray(domainsResponse?.value) ? domainsResponse.value : [];
+  const onMicrosoftDomains = domains
+    .filter((domain) => isInitialMicrosoftDomain(domain.id))
+    .sort((a, b) => Number(!!b.isInitial) - Number(!!a.isInitial) || Number(!!b.isVerified) - Number(!!a.isVerified));
+
+  return onMicrosoftDomains[0]?.id || null;
 };
 
 export const getGDAPRelationshipsSnapshot = async (

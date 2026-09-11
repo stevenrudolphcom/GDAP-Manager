@@ -6,6 +6,7 @@ import {
     updateGDAPAccessAssignment,
     deleteGDAPAccessAssignment,
     updateGDAPRelationshipAutoExtend,
+    getTenantOnMicrosoftDomain,
     searchSecurityGroups
 } from '../services/graphService';
 import { AZURE_AD_ROLES, GROUP_TEMPLATES } from '../constants';
@@ -513,6 +514,8 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
     const [editingAssignment, setEditingAssignment] = useState<DelegatedAdminAccessAssignment | null>(null);
     const [isCreating, setIsCreating] = useState(false);
     const [prefillGroupName, setPrefillGroupName] = useState<string | null>(null);
+    const [tenantOnMicrosoftDomain, setTenantOnMicrosoftDomain] = useState<string | null>(null);
+    const [isLoadingTenantNamespace, setIsLoadingTenantNamespace] = useState(false);
     const [isProcessingId, setIsProcessingId] = useState<string | null>(null);
     const [expandedAssignmentId, setExpandedAssignmentId] = useState<string | null>(null);
     const [showDisableAutoExtendConfirm, setShowDisableAutoExtendConfirm] = useState(false);
@@ -614,6 +617,33 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
     useEffect(() => {
         fetchAssignments();
     }, [fetchAssignments]);
+
+    useEffect(() => {
+        if (!relationship) {
+            setTenantOnMicrosoftDomain(null);
+            setIsLoadingTenantNamespace(false);
+            return;
+        }
+
+        let cancelled = false;
+        setTenantOnMicrosoftDomain(null);
+        setIsLoadingTenantNamespace(true);
+        (async () => {
+            try {
+                const token = await getAccessToken();
+                const domain = await getTenantOnMicrosoftDomain(relationship.customer.tenantId, token);
+                if (!cancelled) setTenantOnMicrosoftDomain(domain);
+            } catch {
+                if (!cancelled) setTenantOnMicrosoftDomain(null);
+            } finally {
+                if (!cancelled) setIsLoadingTenantNamespace(false);
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [relationship, getAccessToken]);
 
     const updateAutoExtend = async (nextState: boolean) => {
         if (!relationship || isUpdatingAutoExtend) return;
@@ -735,7 +765,19 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
             <header className="flex flex-col md:flex-row md:items-start md:justify-between border-b border-gray-100 pb-6 gap-4">
                 <div className="space-y-1 flex-1 min-w-0">
                     <h2 className="text-2xl font-black text-gray-900 break-words leading-tight" title={displayName}>{displayName}</h2>
-                    <p className="text-xs text-gray-400 font-mono tracking-tight">Tenant ID: {customer.tenantId}</p>
+                    <p className="text-xs text-gray-400 font-mono tracking-tight">
+                        Tenant ID: {customer.tenantId}
+                        <span className="mx-2 text-gray-300">|</span>
+                        Default Namespace:{' '}
+                        {isLoadingTenantNamespace ? (
+                            <span className="inline-flex items-center gap-2 align-middle text-gray-400">
+                                <span className="inline-block h-1.5 w-24 overflow-hidden rounded-full bg-gray-200 align-middle">
+                                    <span className="block h-full w-1/2 animate-pulse rounded-full bg-indigo-300" />
+                                </span>
+                                Loading...
+                            </span>
+                        ) : (tenantOnMicrosoftDomain || 'Not available')}
+                    </p>
                     <p className="text-sm font-bold text-gray-700 mt-2">
                         Expires (DD/MM/YYYY): <span className="text-indigo-600">{formattedExpiry}</span>
                     </p>

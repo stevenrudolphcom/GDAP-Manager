@@ -50,8 +50,10 @@ This is a critical step. The application needs permission to read and create GDA
 4.  Select **"Delegated permissions"**.
 5.  In the search box, type `DelegatedAdminRelationship` and select **`DelegatedAdminRelationship.ReadWrite.All`**.
 6.  Search for and select **`Group.Read.All`**. This is required for managing security group assignments to GDAP relationships.
-7.  Click **"Add permissions"**.
-8.  After adding the permissions, you must grant consent. Click the **"Grant admin consent for [Your Tenant Name]"** button and accept the prompt. The status for the permissions should change to "Granted".
+7.  Search for and select **`Domain.Read.All`**. This is used as a fallback to read the customer's full domain list when Partner Center does not return the namespace.
+8.  Add the **Partner Center API** delegated permission **`user_impersonation`**. This is required to read the customer's `*.onmicrosoft.com` namespace from the Partner Center company profile.
+9.  Click **"Add permissions"**.
+10.  After adding the permissions, you must grant consent. Click the **"Grant admin consent for [Your Tenant Name]"** button and accept the prompt. The status for the permissions should change to "Granted".
 
 ### 3. Add App IDs to Code
 

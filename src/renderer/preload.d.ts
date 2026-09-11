@@ -10,6 +10,8 @@ declare global {
             login: () => Promise<any>;
             logout: () => Promise<void>;
             getToken: () => Promise<{ accessToken: string } | null>;
+            getTokenForTenant: (tenantId: string) => Promise<{ accessToken: string } | null>;
+            getCustomerDefaultNamespace: (tenantId: string) => Promise<{ namespace: string | null; error?: string }>;
             // FIX: Aligned the type with the other preload.d.ts to resolve conflicting global types.
             getAccount: () => Promise<{ name: string; tenantId: string; } | null>;
             loadDefaultRoles: () => Promise<string[] | null>;
