@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { DelegatedAdminRelationship } from '../types';
-import { getGDAPRelationships, getGDAPAssignmentsWithGroupDisplayNames } from '../services/graphService';
-import SpinnerIcon from './icons/SpinnerIcon';
+import { GDAPSnapshotProgress, getGDAPRelationshipsSnapshot } from '../services/graphService';
+import LoadingProgressCard from './LoadingProgressCard';
 
 interface RowData {
     relationship: DelegatedAdminRelationship;
@@ -29,11 +29,17 @@ function getGroupBaseName(displayName: string): string {
 const STANDARD_GROUPS = ['AdminAgents', 'HelpdeskAgents', 'SalesAgents'] as const;
 const STANDARD_GROUPS_LOWER = new Set(STANDARD_GROUPS.map(g => g.toLowerCase()));
 
-const OverviewPage: React.FC = () => {
+interface OverviewPageProps {
+    refreshToken?: number;
+    onRefreshStateChange?: (state: { isRefreshing: boolean; lastRefreshedAt: number | null }) => void;
+}
+
+const OverviewPage: React.FC<OverviewPageProps> = ({ refreshToken = 0, onRefreshStateChange }) => {
     const [rows, setRows] = useState<RowData[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [loadedCount, setLoadedCount] = useState(0);
     const [totalCount, setTotalCount] = useState(0);
+    const [loadingLabel, setLoadingLabel] = useState('Fetching assignment data');
     const [error, setError] = useState<string | null>(null);
 
     const getAccessToken = useCallback(async () => {
@@ -42,63 +48,77 @@ const OverviewPage: React.FC = () => {
         return response.accessToken;
     }, []);
 
+    const loadOverview = useCallback(async (forceRefresh = false, isCancelled?: () => boolean) => {
+        setIsLoading(true);
+        setRows([]);
+        setLoadedCount(0);
+        setTotalCount(0);
+        setLoadingLabel('Fetching assignment data');
+        setError(null);
+        if (forceRefresh) {
+            onRefreshStateChange?.({ isRefreshing: true, lastRefreshedAt: null });
+        }
+
+        try {
+            const token = await getAccessToken();
+            const handleProgress = (progress: GDAPSnapshotProgress) => {
+                if (isCancelled?.()) return;
+                setLoadedCount(progress.current);
+                setTotalCount(progress.total);
+                setLoadingLabel(progress.message);
+            };
+            const snapshot = await getGDAPRelationshipsSnapshot(token, {
+                ...(forceRefresh ? { forceRefresh: true } : {}),
+                onProgress: handleProgress,
+            });
+            const relationships = snapshot.relationships;
+            if (isCancelled?.()) return;
+
+            setTotalCount((prev) => (prev > 0 ? prev : relationships.length));
+
+            const collectedRows: RowData[] = relationships.map((relationship) => ({
+                relationship,
+                groupNames: new Set(snapshot.groupNamesByRelationshipId[relationship.id] || []),
+            }));
+
+            setLoadedCount(relationships.length);
+            const sorted = collectedRows
+                .filter(Boolean)
+                .sort((a, b) =>
+                    a.relationship.displayName.localeCompare(b.relationship.displayName, 'de', { sensitivity: 'base' })
+                );
+            if (isCancelled?.()) return;
+
+            setRows(sorted);
+            onRefreshStateChange?.({ isRefreshing: false, lastRefreshedAt: Date.now() });
+        } catch (err: any) {
+            if (isCancelled?.()) return;
+            setError(err.message || 'Failed to load overview.');
+            if (forceRefresh) {
+                onRefreshStateChange?.({ isRefreshing: false, lastRefreshedAt: null });
+            }
+        } finally {
+            if (isCancelled?.()) return;
+            setIsLoading(false);
+        }
+    }, [getAccessToken, onRefreshStateChange]);
+
     useEffect(() => {
         let cancelled = false;
-
-        const load = async () => {
-            setIsLoading(true);
-            setRows([]);
-            setLoadedCount(0);
-            setTotalCount(0);
-            setError(null);
-
-            try {
-                const token = await getAccessToken();
-                const relationships = await getGDAPRelationships(token);
-                if (cancelled) return;
-
-                setTotalCount(relationships.length);
-
-                const collectedRows: RowData[] = new Array(relationships.length);
-
-                await Promise.all(
-                    relationships.map(async (r, i) => {
-                        try {
-                            const assignments = await getGDAPAssignmentsWithGroupDisplayNames(r.id, token);
-                            const groupNames = new Set<string>(
-                                assignments
-                                    .filter(a => a.accessContainer.displayName)
-                                    .map(a => a.accessContainer.displayName as string)
-                            );
-                            collectedRows[i] = { relationship: r, groupNames };
-                        } catch {
-                            collectedRows[i] = { relationship: r, groupNames: new Set() };
-                        } finally {
-                            if (!cancelled) setLoadedCount(prev => prev + 1);
-                        }
-                    })
-                );
-
-                if (!cancelled) {
-                    const sorted = collectedRows
-                        .filter(Boolean)
-                        .sort((a, b) =>
-                            a.relationship.displayName.localeCompare(b.relationship.displayName, 'de', { sensitivity: 'base' })
-                        );
-                    setRows(sorted);
-                    setIsLoading(false);
-                }
-            } catch (err: any) {
-                if (!cancelled) {
-                    setError(err.message || 'Failed to load overview.');
-                    setIsLoading(false);
-                }
-            }
+        void loadOverview(false, () => cancelled);
+        return () => {
+            cancelled = true;
         };
+    }, [loadOverview]);
 
-        load();
-        return () => { cancelled = true; };
-    }, [getAccessToken]);
+    useEffect(() => {
+        if (refreshToken <= 0) return;
+        let cancelled = false;
+        void loadOverview(true, () => cancelled);
+        return () => {
+            cancelled = true;
+        };
+    }, [loadOverview, refreshToken]);
 
     const columnGroups = useMemo((): ColumnGroup[] => {
         const allGroupNames = new Set<string>();
@@ -129,28 +149,13 @@ const OverviewPage: React.FC = () => {
 
     // ── Loading ──────────────────────────────────────────────────────────────
     if (isLoading) {
-        const pct = totalCount > 0 ? (loadedCount / totalCount) * 100 : 0;
         return (
-            <div className="flex flex-col items-center justify-center p-12 bg-white shadow-lg rounded-lg min-h-[400px] gap-5">
-                <SpinnerIcon className="h-10 w-10 animate-spin text-indigo-600" />
-                <span className="text-gray-600 font-bold uppercase tracking-widest text-sm">
-                    Loading overview{totalCount > 0 ? ` — ${loadedCount} / ${totalCount} relationships` : '…'}
-                </span>
-                {totalCount > 0 && (
-                    <div className="w-80">
-                        <div className="flex justify-between text-xs text-gray-500 mb-1.5">
-                            <span>Fetching assignment data</span>
-                            <span>{Math.round(pct)} %</span>
-                        </div>
-                        <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-                            <div
-                                className="bg-indigo-500 h-2 rounded-full transition-all duration-300"
-                                style={{ width: `${pct}%` }}
-                            />
-                        </div>
-                    </div>
-                )}
-            </div>
+            <LoadingProgressCard
+                title={`Loading overview${totalCount > 0 ? ` — ${loadedCount} / ${totalCount} elements` : '…'}`}
+                progressLabel={loadingLabel}
+                current={loadedCount}
+                total={totalCount}
+            />
         );
     }
 

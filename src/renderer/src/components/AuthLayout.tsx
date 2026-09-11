@@ -29,7 +29,7 @@ const SignOutButton: React.FC<{ onSignOut: () => void }> = ({ onSignOut }) => {
     );
 };
 
-const AuthLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+const AuthLayout: React.FC<{ children: React.ReactNode; topRightContent?: React.ReactNode }> = ({ children, topRightContent }) => {
     const [account, setAccount] = useState<any | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     
@@ -88,7 +88,10 @@ const AuthLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             </div>
 
             {isAuthenticated && (
-                <header className="w-full flex justify-end items-center pb-4">
+                <header className="w-full flex justify-end items-start gap-4 pb-4">
+                    {topRightContent && (
+                        <div className="flex-shrink-0">{topRightContent}</div>
+                    )}
                     <div className="text-right">
                         <p className="text-sm font-semibold text-gray-800">{name}</p>
                         <SignOutButton onSignOut={handleSignOut} />

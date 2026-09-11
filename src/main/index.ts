@@ -27,6 +27,8 @@ const AAD_APP_TENANT_ID = APP_CONFIG.AAD_APP_TENANT_ID;
 
 let mainWindow: BrowserWindow | null = null;
 let pca: PublicClientApplication | undefined;
+let cachedAccessToken: { accessToken: string; expiresAt: number } | null = null;
+let pendingAccessTokenRequest: Promise<{ accessToken: string } | null> | null = null;
 
 const scopes = [
   'openid',
@@ -169,6 +171,12 @@ ipcMain.handle('login', async () => {
         await shell.openExternal(url);
       },
     });
+    if (result?.accessToken) {
+      cachedAccessToken = {
+        accessToken: result.accessToken,
+        expiresAt: result.expiresOn?.getTime() ?? Date.now() + 45 * 60 * 1000,
+      };
+    }
     return result;
   } catch (error: any) {
     if (error?.errorCode === 'authentication_canceled') {
@@ -184,6 +192,8 @@ ipcMain.handle('login', async () => {
 ipcMain.handle('logout', async () => {
   try {
     const msal = getMsal();
+    cachedAccessToken = null;
+    pendingAccessTokenRequest = null;
     const accounts = await msal.getTokenCache().getAllAccounts();
     for (const acc of accounts) {
       await msal.getTokenCache().removeAccount(acc);
@@ -196,42 +206,63 @@ ipcMain.handle('logout', async () => {
 });
 
 ipcMain.handle('get-token', async (): Promise<{ accessToken: string } | null> => {
-  try {
-    const msal = getMsal();
-    let account = await getFirstAccount(msal);
-    if (!account) {
-      const interactive = await msal.acquireTokenInteractive({
-        scopes,
-        openBrowser: async (url: string) => {
-          await shell.openExternal(url);
-        },
-      });
-      account = interactive.account ?? null;
-      if (!account) {
-        dialog.showErrorBox('Token Error', 'No account returned from interactive login.');
-        return null;
-      }
-    }
-    let authResult: AuthenticationResult | null = null;
-    try {
-      authResult = await msal.acquireTokenSilent({ account, scopes });
-    } catch {
-      authResult = await msal.acquireTokenInteractive({
-        scopes,
-        openBrowser: async (url: string) => {
-          await shell.openExternal(url);
-        },
-      });
-    }
-    if (authResult?.accessToken) {
-      return { accessToken: authResult.accessToken };
-    }
-    dialog.showErrorBox('Token Error', 'No access token was returned.');
-    return null;
-  } catch (err: any) {
-    dialog.showErrorBox('Token Error', err?.message || 'Unable to acquire token.');
-    return null;
+  if (cachedAccessToken && Date.now() < cachedAccessToken.expiresAt - 60_000) {
+    return { accessToken: cachedAccessToken.accessToken };
   }
+
+  if (pendingAccessTokenRequest) {
+    return pendingAccessTokenRequest;
+  }
+
+  pendingAccessTokenRequest = (async () => {
+    try {
+      const msal = getMsal();
+      let account = await getFirstAccount(msal);
+      if (!account) {
+        const interactive = await msal.acquireTokenInteractive({
+          scopes,
+          openBrowser: async (url: string) => {
+            await shell.openExternal(url);
+          },
+        });
+        account = interactive.account ?? null;
+        if (!account) {
+          dialog.showErrorBox('Token Error', 'No account returned from interactive login.');
+          return null;
+        }
+      }
+
+      let authResult: AuthenticationResult | null = null;
+      try {
+        authResult = await msal.acquireTokenSilent({ account, scopes });
+      } catch {
+        authResult = await msal.acquireTokenInteractive({
+          scopes,
+          openBrowser: async (url: string) => {
+            await shell.openExternal(url);
+          },
+        });
+      }
+
+      if (authResult?.accessToken) {
+        cachedAccessToken = {
+          accessToken: authResult.accessToken,
+          expiresAt: authResult.expiresOn?.getTime() ?? Date.now() + 45 * 60 * 1000,
+        };
+        return { accessToken: authResult.accessToken };
+      }
+
+      dialog.showErrorBox('Token Error', 'No access token was returned.');
+      return null;
+    } catch (err: any) {
+      dialog.showErrorBox('Token Error', err?.message || 'Unable to acquire token.');
+      return null;
+    } finally {
+      pendingAccessTokenRequest = null;
+    }
+  })();
+
+  return pendingAccessTokenRequest;
 });
 
 ipcMain.handle('get-account', async () => {
@@ -253,6 +284,31 @@ ipcMain.handle('get-account', async () => {
 });
 
 const defaultsFilePath = path.join(app.getPath('userData'), 'user-default-roles.json');
+
+ipcMain.handle('select-security-matrix-csv-export-path', async (_event, defaultFileName: string) => {
+  if (!mainWindow) return { canceled: true };
+
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Export Security Matrix as CSV',
+    defaultPath: path.join(app.getPath('downloads'), defaultFileName),
+    filters: [{ name: 'CSV File', extensions: ['csv'] }],
+  });
+
+  return result.canceled || !result.filePath
+    ? { canceled: true }
+    : { canceled: false, filePath: result.filePath };
+});
+
+ipcMain.handle('save-security-matrix-csv', async (_event, filePath: string, csvContent: string) => {
+  try {
+    const targetPath = filePath.toLowerCase().endsWith('.csv') ? filePath : `${filePath}.csv`;
+    fs.writeFileSync(targetPath, csvContent, 'utf-8');
+    return { success: true, filePath: targetPath };
+  } catch (error: any) {
+    console.error('Error saving security matrix CSV:', error);
+    return { success: false, error: error?.message || 'Failed to save CSV file.' };
+  }
+});
 
 ipcMain.handle('load-default-roles', async () => {
   try {

@@ -6,7 +6,7 @@ export const APP_CONFIG = {
   // App version info for display
   ROOT_VERSION: '1.4.0',
   ROOT_AUTHOR: 'Jarno Kurki',
-  SUB_VERSION: '1.5.0',
+  SUB_VERSION: '1.6.0',
   SUB_CONTRIBUTOR: 'Steven Rudolph',
 
   // Azure AD App Registration Details
@@ -197,6 +197,7 @@ export const APP_CONFIG = {
     CSCT_M365_BusinessAutomation: {
       roleIds: [
         '11648597-926c-4cf3-9c36-bcebb0ba8dcc', // Power Platform Administrator
+        'f2ef992c-3afb-46b9-b7cf-a126ee74c451', // Global Reader
       ],
     },
     CSCT_AZ_IT_Architect: {

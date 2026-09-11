@@ -10,4 +10,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadDefaultRoles: () => ipcRenderer.invoke('load-default-roles'),
   saveDefaultRoles: (roleIds: string[]) => ipcRenderer.invoke('save-default-roles', roleIds),
   resetDefaultRoles: () => ipcRenderer.invoke('reset-default-roles'),
+  selectSecurityMatrixCsvExportPath: (defaultFileName: string) => ipcRenderer.invoke('select-security-matrix-csv-export-path', defaultFileName),
+  saveSecurityMatrixCsv: (filePath: string, csvContent: string) => ipcRenderer.invoke('save-security-matrix-csv', filePath, csvContent),
 });

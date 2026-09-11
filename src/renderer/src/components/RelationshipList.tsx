@@ -6,14 +6,13 @@ interface RelationshipListProps {
     relationships: DelegatedAdminRelationship[];
     selectedRelationshipId: string | null;
     onSelectRelationship: (relationship: DelegatedAdminRelationship) => void;
-    onRefresh: () => void;
     assignmentCounts?: Record<string, number>;
     isPreloading?: boolean;
     preloadDone?: number;
     preloadTotal?: number;
 }
 
-const RelationshipList: React.FC<RelationshipListProps> = ({ relationships, selectedRelationshipId, onSelectRelationship, onRefresh, assignmentCounts, isPreloading, preloadDone = 0, preloadTotal = 0 }) => {
+const RelationshipList: React.FC<RelationshipListProps> = ({ relationships, selectedRelationshipId, onSelectRelationship, assignmentCounts, isPreloading, preloadDone = 0, preloadTotal = 0 }) => {
     const [filter, setFilter] = useState('');
 
     const filteredRelationships = useMemo(() => {
@@ -46,10 +45,9 @@ const RelationshipList: React.FC<RelationshipListProps> = ({ relationships, sele
     
     return (
         <div className="flex flex-col h-full">
-            <div className="flex items-center justify-between mb-2">
-                 <h2 className="text-lg font-semibold text-gray-800">Relationships</h2>
-                 <button onClick={onRefresh} className="text-sm text-indigo-600 hover:text-indigo-800 font-medium">Refresh</button>
-            </div>
+              <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-lg font-semibold text-gray-800">Relationships</h2>
+              </div>
             {isPreloading ? (
                 <div className="mb-3">
                     <div className="flex justify-between text-xs text-gray-500 mb-1">

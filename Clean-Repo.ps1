@@ -44,6 +44,49 @@ function Write-Info($msg) { Write-Host "[Clean-Repo] $msg" -ForegroundColor Cyan
 function Write-Ok($msg)   { Write-Host "[Clean-Repo] $msg" -ForegroundColor Green }
 function Write-Skip($msg) { Write-Host "[Clean-Repo] $msg" -ForegroundColor DarkGray }
 
+function Stop-ProjectNodeProcesses {
+    $escapedRoot = [regex]::Escape($projectRoot)
+    $processes = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.ProcessId -ne $PID -and
+        $_.Name -match '^(node|electron|esbuild)\.exe$' -and
+        (
+            ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($projectRoot, [StringComparison]::OrdinalIgnoreCase)) -or
+            ($_.CommandLine -and $_.CommandLine -match $escapedRoot)
+        )
+    }
+
+    foreach ($p in $processes) {
+        Write-Info "Stoppe blockierenden Prozess: $($p.Name) PID $($p.ProcessId)"
+        Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Remove-PathWithRetry($Path, $DisplayName, [switch]$Recurse) {
+    $maxAttempts = 3
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        try {
+            if ($Recurse) {
+                Remove-Item $Path -Recurse -Force -ErrorAction Stop
+            } else {
+                Remove-Item $Path -Force -ErrorAction Stop
+            }
+            return
+        } catch {
+            if ($attempt -eq 1) {
+                Stop-ProjectNodeProcesses
+            }
+
+            if ($attempt -lt $maxAttempts) {
+                Write-Info "Loeschen von $DisplayName war blockiert, versuche erneut ($($attempt + 1)/$maxAttempts) ..."
+                Start-Sleep -Milliseconds 750
+                continue
+            }
+
+            throw "Konnte $DisplayName nicht loeschen. Vermutlich haelt noch ein laufender Prozess eine Datei offen. Schliessen Sie GDAP Manager, Dev-Server und Terminals im Projektordner und starten Sie .\Clean-Repo.ps1 erneut. Details: $($_.Exception.Message)"
+        }
+    }
+}
+
 # Zu entfernende Verzeichnisse (regenerierbar)
 $dirs = @('node_modules', '.electron-cache', 'out', 'release')
 # Zu entfernende Datei-Muster (regenerierbar)
@@ -63,7 +106,7 @@ foreach ($d in $dirs) {
             Write-Info "WUERDE loeschen: $d\  ($mb MB)"
         } else {
             Write-Info "Loesche $d\  ($mb MB) ..."
-            Remove-Item $full -Recurse -Force -ErrorAction Stop
+            Remove-PathWithRetry $full "$d\" -Recurse
             $removed += $d
         }
     } else {
@@ -79,7 +122,7 @@ foreach ($glob in $fileGlobs) {
             Write-Info "WUERDE loeschen: $($f.Name)"
         } else {
             Write-Info "Loesche $($f.Name) ..."
-            Remove-Item $f.FullName -Force -ErrorAction Stop
+            Remove-PathWithRetry $f.FullName $f.Name
             $removed += $f.Name
         }
     }
