@@ -72,7 +72,7 @@ const SecurityMatrixPage: React.FC<SecurityMatrixPageProps> = ({ refreshToken = 
         const normalizedFilter = groupNameFilter.trim().toLocaleLowerCase('de');
         if (!normalizedFilter) return rows;
 
-        return rows.filter((row) => row.groupName.toLocaleLowerCase('de').endsWith(normalizedFilter));
+        return rows.filter((row) => row.groupName.toLocaleLowerCase('de').includes(normalizedFilter));
     }, [groupNameFilter, rows]);
 
     const roleHeaderHeightPx = useMemo(() => {
@@ -330,9 +330,9 @@ const SecurityMatrixPage: React.FC<SecurityMatrixPageProps> = ({ refreshToken = 
                                     type="search"
                                     value={groupNameFilter}
                                     onChange={(event) => setGroupNameFilter(event.target.value)}
-                                    placeholder="Ends with, e.g. -CG"
+                                    placeholder="Contains, e.g. CG"
                                     className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 placeholder:text-gray-400 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                                    aria-label="Filter security groups by name ending"
+                                    aria-label="Filter security groups by name"
                                 />
                             </th>
                             {columnRoleIds.map((roleId) => (
