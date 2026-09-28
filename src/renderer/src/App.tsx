@@ -149,7 +149,7 @@ const App: React.FC = () => {
 
     return (
         <AuthLayout topRightContent={topRightRefreshContent}>
-            <div className="w-[95%]">
+            <div className="w-full">
                 <header className="text-center mb-8">
                     <h1 className="text-3xl md:text-4xl font-bold text-gray-900">{headerContent.title}</h1>
                     <p className="text-md text-gray-600 mt-2">{headerContent.subtitle}</p>

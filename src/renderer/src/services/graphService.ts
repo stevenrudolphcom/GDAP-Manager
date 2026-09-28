@@ -561,36 +561,48 @@ export const getGDAPRelationships = async (accessToken: string): Promise<Delegat
     return response.value || [];
 };
 
-export const getGDAPRelationshipAccessAssignments = async (relationshipId: string, accessToken: string): Promise<DelegatedAdminAccessAssignment[]> => {
-  const cachedSnapshot = gdapSnapshotCache.get(accessToken);
-  if (cachedSnapshot?.assignmentsByRelationshipId[relationshipId]) {
-    return cachedSnapshot.assignmentsByRelationshipId[relationshipId].map(cloneAssignment);
+export const getGDAPRelationshipAccessAssignments = async (
+  relationshipId: string,
+  accessToken: string,
+  forceRefresh = false
+): Promise<DelegatedAdminAccessAssignment[]> => {
+  if (!forceRefresh) {
+    const cachedSnapshot = gdapSnapshotCache.get(accessToken);
+    if (cachedSnapshot?.assignmentsByRelationshipId[relationshipId]) {
+      return cachedSnapshot.assignmentsByRelationshipId[relationshipId].map(cloneAssignment);
+    }
   }
-    const endpoint = `${graphEndpoints.graphApi}/${relationshipId}/accessAssignments`;
-    const response = await callGraphApi(accessToken, endpoint);
-    const assignments = response.value || [];
-    return assignments.filter((a: DelegatedAdminAccessAssignment) => a.status !== 'deleted' && a.status !== 'deleting');
+  const endpoint = `${graphEndpoints.graphApi}/${relationshipId}/accessAssignments`;
+  const response = await callGraphApi(accessToken, endpoint);
+  const assignments = response.value || [];
+  return assignments.filter((a: DelegatedAdminAccessAssignment) => a.status !== 'deleted' && a.status !== 'deleting');
 };
 
-export const getGDAPAssignmentsWithGroupDisplayNames = async (relationshipId: string, accessToken: string): Promise<DelegatedAdminAccessAssignment[]> => {
-  const cachedSnapshot = gdapSnapshotCache.get(accessToken);
-  if (cachedSnapshot?.assignmentsByRelationshipId[relationshipId]) {
-    return cachedSnapshot.assignmentsByRelationshipId[relationshipId].map(cloneAssignment);
-  }
+export const getGDAPAssignmentsWithGroupDisplayNames = async (
+  relationshipId: string,
+  accessToken: string,
+  forceRefresh = false
+): Promise<DelegatedAdminAccessAssignment[]> => {
+  if (!forceRefresh) {
+    const cachedSnapshot = gdapSnapshotCache.get(accessToken);
+    if (cachedSnapshot?.assignmentsByRelationshipId[relationshipId]) {
+      return cachedSnapshot.assignmentsByRelationshipId[relationshipId].map(cloneAssignment);
+    }
 
-  const pendingSnapshot = gdapSnapshotPromises.get(accessToken);
-  if (pendingSnapshot) {
-    const snapshot = await pendingSnapshot;
-    const cachedAssignments = snapshot.assignmentsByRelationshipId[relationshipId];
-    if (cachedAssignments) {
-      return cachedAssignments.map(cloneAssignment);
+    const pendingSnapshot = gdapSnapshotPromises.get(accessToken);
+    if (pendingSnapshot) {
+      const snapshot = await pendingSnapshot;
+      const cachedAssignments = snapshot.assignmentsByRelationshipId[relationshipId];
+      if (cachedAssignments) {
+        return cachedAssignments.map(cloneAssignment);
+      }
     }
   }
 
-    const assignments = await getGDAPRelationshipAccessAssignments(relationshipId, accessToken);
-    if (!assignments || assignments.length === 0) return [];
-    const groupIds = [...new Set(assignments.map(a => a.accessContainer.accessContainerId))];
-    const groupNameMap = new Map<string, string>();
+  const assignments = await getGDAPRelationshipAccessAssignments(relationshipId, accessToken, forceRefresh);
+  if (!assignments || assignments.length === 0) return [];
+  const groupIds = [...new Set(assignments.map((a) => a.accessContainer.accessContainerId))];
+  const groupNameMap = new Map<string, string>();
   const batchResponses = await runGraphBatchRequests<{ id?: string; displayName?: string }>(
     accessToken,
     groupIds.map((id) => ({
@@ -603,35 +615,171 @@ export const getGDAPAssignmentsWithGroupDisplayNames = async (relationshipId: st
     if (response.status === 200 && response.body?.id && response.body.displayName) {
       groupNameMap.set(response.body.id, response.body.displayName);
     }
-    }
-    return assignments.map(a => ({
-        ...a,
-        accessContainer: { ...a.accessContainer, displayName: groupNameMap.get(a.accessContainer.accessContainerId) || 'Name not found' },
-    }));
+  }
+  return assignments.map((a) => ({
+    ...a,
+    accessContainer: {
+      ...a.accessContainer,
+      displayName: groupNameMap.get(a.accessContainer.accessContainerId) || 'Name not found',
+    },
+  }));
 };
 
-export const createGDAPAccessAssignment = async (relationshipId: string, securityGroupId: string, roleIds: string[], accessToken: string) => {
-  invalidateGDAPSnapshotCache();
+export const getGDAPSingleAccessAssignment = async (
+  relationshipId: string,
+  assignmentId: string,
+  accessToken: string
+): Promise<DelegatedAdminAccessAssignment> => {
+  const endpoint = `${graphEndpoints.graphApi}/${relationshipId}/accessAssignments/${assignmentId}`;
+  const assignment: DelegatedAdminAccessAssignment = await callGraphApi(accessToken, endpoint);
+  let displayName = assignment.accessContainer.displayName;
+  if (!displayName && assignment.accessContainer.accessContainerId) {
+    try {
+      const groupRes = await callGraphApi(
+        accessToken,
+        `https://graph.microsoft.com/v1.0/groups/${assignment.accessContainer.accessContainerId}?$select=id,displayName`
+      );
+      if (groupRes?.displayName) {
+        displayName = groupRes.displayName;
+      }
+    } catch {}
+  }
+  return {
+    ...assignment,
+    accessContainer: {
+      ...assignment.accessContainer,
+      displayName: displayName || 'Name not found',
+    },
+  };
+};
+
+export const updateAssignmentInSnapshotCache = (
+  relationshipId: string,
+  assignment: DelegatedAdminAccessAssignment
+) => {
+  for (const [, snapshot] of gdapSnapshotCache.entries()) {
+    const list = snapshot.assignmentsByRelationshipId[relationshipId] || [];
+    const idx = list.findIndex((a) => a.id === assignment.id);
+    if (idx >= 0) {
+      list[idx] = cloneAssignment(assignment);
+    } else {
+      list.push(cloneAssignment(assignment));
+    }
+    snapshot.assignmentsByRelationshipId[relationshipId] = list;
+
+    const groupNames = list
+      .map((a) => a.accessContainer.displayName)
+      .filter((name): name is string => !!name && name !== 'Name not found');
+    snapshot.groupNamesByRelationshipId[relationshipId] = [...new Set(groupNames)].sort((a, b) =>
+      a.localeCompare(b, 'de', { sensitivity: 'base' })
+    );
+  }
+};
+
+export const deleteAssignmentFromSnapshotCache = (
+  relationshipId: string,
+  assignmentId: string
+) => {
+  for (const [, snapshot] of gdapSnapshotCache.entries()) {
+    const list = snapshot.assignmentsByRelationshipId[relationshipId] || [];
+    const nextList = list.filter((a) => a.id !== assignmentId);
+    snapshot.assignmentsByRelationshipId[relationshipId] = nextList;
+
+    const groupNames = nextList
+      .map((a) => a.accessContainer.displayName)
+      .filter((name): name is string => !!name && name !== 'Name not found');
+    snapshot.groupNamesByRelationshipId[relationshipId] = [...new Set(groupNames)].sort((a, b) =>
+      a.localeCompare(b, 'de', { sensitivity: 'base' })
+    );
+  }
+};
+
+export const createGDAPAccessAssignment = async (
+  relationshipId: string,
+  securityGroupId: string,
+  roleIds: string[],
+  accessToken: string
+): Promise<DelegatedAdminAccessAssignment> => {
   const endpoint = `${graphEndpoints.graphApi}/${relationshipId}/accessAssignments`;
   const payload = {
     accessContainer: { accessContainerId: securityGroupId, accessContainerType: 'securityGroup' },
     accessDetails: { unifiedRoles: roleIds.map((id) => ({ roleDefinitionId: id })) },
   };
-  return await callGraphApi(accessToken, endpoint, { method: 'POST', body: JSON.stringify(payload) });
+  const created = await callGraphApi(accessToken, endpoint, { method: 'POST', body: JSON.stringify(payload) });
+  const result: DelegatedAdminAccessAssignment = {
+    ...(created || {}),
+    accessContainer: {
+      ...(created?.accessContainer || {}),
+      accessContainerId: securityGroupId,
+      accessContainerType: 'securityGroup',
+    },
+    accessDetails: {
+      unifiedRoles: roleIds.map((id) => ({ roleDefinitionId: id })),
+    },
+  };
+  updateAssignmentInSnapshotCache(relationshipId, result);
+  return result;
 };
 
-export const updateGDAPAccessAssignment = async (relationshipId: string, assignmentId: string, roleIds: string[], etag: string, accessToken: string): Promise<DelegatedAdminAccessAssignment> => {
-  invalidateGDAPSnapshotCache();
-    const endpoint = `${graphEndpoints.graphApi}/${relationshipId}/accessAssignments/${assignmentId}`;
-    const payload = { accessDetails: { unifiedRoles: roleIds.map(id => ({ roleDefinitionId: id })) } };
-    await callGraphApi(accessToken, endpoint, { method: 'PATCH', headers: new Headers({ 'If-Match': etag }), body: JSON.stringify(payload) });
-    return await callGraphApi(accessToken, endpoint);
+export const updateGDAPAccessAssignment = async (
+  relationshipId: string,
+  assignmentId: string,
+  roleIds: string[],
+  etag: string,
+  accessToken: string
+): Promise<DelegatedAdminAccessAssignment> => {
+  const endpoint = `${graphEndpoints.graphApi}/${relationshipId}/accessAssignments/${assignmentId}`;
+  const payload = { accessDetails: { unifiedRoles: roleIds.map((id) => ({ roleDefinitionId: id })) } };
+  await callGraphApi(accessToken, endpoint, {
+    method: 'PATCH',
+    headers: new Headers({ 'If-Match': etag }),
+    body: JSON.stringify(payload),
+  });
+
+  // Handle Graph directory replication delay:
+  // Short polling with retry to give Graph a chance to return updated unifiedRoles and fresh ETag
+  let fetched: DelegatedAdminAccessAssignment | null = null;
+  for (let i = 0; i < 3; i += 1) {
+    await delay(500);
+    try {
+      fetched = await callGraphApi(accessToken, endpoint);
+      const fetchedRoleIds = (fetched?.accessDetails?.unifiedRoles || []).map((r) => r.roleDefinitionId);
+      const allMatched =
+        roleIds.length === fetchedRoleIds.length && roleIds.every((id) => fetchedRoleIds.includes(id));
+      if (allMatched) {
+        break;
+      }
+    } catch {}
+  }
+
+  const result: DelegatedAdminAccessAssignment = {
+    ...(fetched || {}),
+    id: assignmentId,
+    status: fetched?.status || 'active',
+    accessContainer: fetched?.accessContainer || {
+      accessContainerId: '',
+      accessContainerType: 'securityGroup',
+    },
+    accessDetails: {
+      unifiedRoles: roleIds.map((id) => ({ roleDefinitionId: id })),
+    },
+    createdDateTime: fetched?.createdDateTime || new Date().toISOString(),
+    lastModifiedDateTime: new Date().toISOString(),
+    '@odata.etag': fetched?.['@odata.etag'] || etag,
+  };
+  updateAssignmentInSnapshotCache(relationshipId, result);
+  return result;
 };
 
-export const deleteGDAPAccessAssignment = async (relationshipId: string, assignmentId: string, etag: string, accessToken: string): Promise<void> => {
-  invalidateGDAPSnapshotCache();
-    const endpoint = `${graphEndpoints.graphApi}/${relationshipId}/accessAssignments/${assignmentId}`;
-    await callGraphApi(accessToken, endpoint, { method: 'DELETE', headers: new Headers({ 'If-Match': etag }) });
+export const deleteGDAPAccessAssignment = async (
+  relationshipId: string,
+  assignmentId: string,
+  etag: string,
+  accessToken: string
+): Promise<void> => {
+  const endpoint = `${graphEndpoints.graphApi}/${relationshipId}/accessAssignments/${assignmentId}`;
+  await callGraphApi(accessToken, endpoint, { method: 'DELETE', headers: new Headers({ 'If-Match': etag }) });
+  deleteAssignmentFromSnapshotCache(relationshipId, assignmentId);
 };
 
 export const searchSecurityGroups = async (

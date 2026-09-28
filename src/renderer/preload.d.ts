@@ -17,6 +17,9 @@ declare global {
             loadDefaultRoles: () => Promise<string[] | null>;
             saveDefaultRoles: (roleIds: string[]) => Promise<{ success: boolean; error?: string }>;
             resetDefaultRoles: () => Promise<{ success: boolean; error?: string }>;
+            loadRolePresets: () => Promise<Record<string, string[]>>;
+            saveRolePreset: (name: string, roleIds: string[]) => Promise<{ success: boolean; presets?: Record<string, string[]>; error?: string }>;
+            deleteRolePreset: (name: string) => Promise<{ success: boolean; presets?: Record<string, string[]>; error?: string }>;
             selectSecurityMatrixCsvExportPath: (defaultFileName: string) => Promise<{ canceled: true } | { canceled: false; filePath: string }>;
             saveSecurityMatrixCsv: (filePath: string, csvContent: string) => Promise<{ success: boolean; filePath?: string; error?: string }>;
         }

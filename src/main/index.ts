@@ -467,6 +467,7 @@ ipcMain.handle('get-account', async () => {
 });
 
 const defaultsFilePath = path.join(app.getPath('userData'), 'user-default-roles.json');
+const presetsFilePath = path.join(app.getPath('userData'), 'user-role-presets.json');
 
 ipcMain.handle('select-security-matrix-csv-export-path', async (_event, defaultFileName: string) => {
   if (!mainWindow) return { canceled: true };
@@ -523,6 +524,58 @@ ipcMain.handle('reset-default-roles', async () => {
     return { success: true };
   } catch (error: any) {
     console.error('Error resetting default roles:', error);
+    return { success: false, error: error?.message };
+  }
+});
+
+ipcMain.handle('load-role-presets', async () => {
+  try {
+    if (fs.existsSync(presetsFilePath)) {
+      const data = fs.readFileSync(presetsFilePath, 'utf-8');
+      return JSON.parse(data);
+    } else if (fs.existsSync(defaultsFilePath)) {
+      const data = fs.readFileSync(defaultsFilePath, 'utf-8');
+      const defaultRoles = JSON.parse(data);
+      if (Array.isArray(defaultRoles) && defaultRoles.length > 0) {
+        return { 'Default': defaultRoles };
+      }
+    }
+  } catch (error) {
+    console.error('Error loading role presets:', error);
+  }
+  return {};
+});
+
+ipcMain.handle('save-role-preset', async (_event, name: string, roleIds: string[]) => {
+  try {
+    let presets: Record<string, string[]> = {};
+    if (fs.existsSync(presetsFilePath)) {
+      try {
+        presets = JSON.parse(fs.readFileSync(presetsFilePath, 'utf-8'));
+      } catch {}
+    }
+    presets[name.trim()] = roleIds;
+    fs.writeFileSync(presetsFilePath, JSON.stringify(presets, null, 2));
+    return { success: true, presets };
+  } catch (error: any) {
+    console.error('Error saving role preset:', error);
+    return { success: false, error: error?.message };
+  }
+});
+
+ipcMain.handle('delete-role-preset', async (_event, name: string) => {
+  try {
+    let presets: Record<string, string[]> = {};
+    if (fs.existsSync(presetsFilePath)) {
+      try {
+        presets = JSON.parse(fs.readFileSync(presetsFilePath, 'utf-8'));
+      } catch {}
+    }
+    delete presets[name];
+    fs.writeFileSync(presetsFilePath, JSON.stringify(presets, null, 2));
+    return { success: true, presets };
+  } catch (error: any) {
+    console.error('Error deleting role preset:', error);
     return { success: false, error: error?.message };
   }
 });

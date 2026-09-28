@@ -10,6 +10,8 @@ interface RoleSelectorProps {
     onSaveDefaults: (ids: string[]) => Promise<void>;
     onResetDefaults: () => Promise<void>;
     allowedRoleIds?: string[];
+    saveButtonLabel?: string;
+    defaultOptionLabel?: string;
 }
 
 const RoleSelector: React.FC<RoleSelectorProps> = ({ 
@@ -18,7 +20,9 @@ const RoleSelector: React.FC<RoleSelectorProps> = ({
     userDefaultRoles, 
     onSaveDefaults, 
     onResetDefaults,
-    allowedRoleIds
+    allowedRoleIds,
+    saveButtonLabel,
+    defaultOptionLabel
 }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [useDefault, setUseDefault] = useState(true);
@@ -37,7 +41,7 @@ const RoleSelector: React.FC<RoleSelectorProps> = ({
         return baseDefaults.filter(id => allowedRoleIds.includes(id));
     }, [userDefaultRoles, allowedRoleIds]);
 
-    const defaultLabel = userDefaultRoles ? 'Use My Saved Defaults' : 'Use Default Roles (Recommended)';
+    const defaultLabel = defaultOptionLabel || (userDefaultRoles ? 'Use My Saved Defaults' : 'Use Default Roles (Recommended)');
     
     // Sync the useDefault state if the selected roles match the current defaults
     useEffect(() => {
@@ -45,6 +49,8 @@ const RoleSelector: React.FC<RoleSelectorProps> = ({
         const sortedDefaults = [...currentDefaults].sort();
         if (JSON.stringify(sortedSelected) === JSON.stringify(sortedDefaults)) {
             setUseDefault(true);
+        } else {
+            setUseDefault(false);
         }
     }, [selectedRoleIds, currentDefaults]);
 
@@ -108,7 +114,7 @@ const RoleSelector: React.FC<RoleSelectorProps> = ({
             case 'saved':
                 return <><CheckIcon className="-ml-1 mr-2 h-5 w-5" /> Saved!</>;
             default:
-                return 'Save as Default';
+                return saveButtonLabel || 'Save as Default';
         }
     };
     
@@ -137,13 +143,67 @@ const RoleSelector: React.FC<RoleSelectorProps> = ({
                         <span className="font-medium text-gray-700">Customize Roles</span>
                     </label>
                 </div>
-                {userDefaultRoles && (
+                {userDefaultRoles && userDefaultRoles.length > 0 && (
                      <button type="button" onClick={onResetDefaults} className="text-sm font-medium text-indigo-600 hover:text-indigo-800">
                         Reset to Recommended
                     </button>
                 )}
             </div>
             
+            {useDefault && userDefaultRoles && userDefaultRoles.length === 0 && (
+                <div className="border border-amber-200 rounded-lg p-3 bg-amber-50/40 text-xs text-amber-800">
+                    No preset is defined for this group. Switch to "Customize Roles" to select roles and save them as a preset.
+                </div>
+            )}
+
+            {useDefault && currentDefaults.length > 0 && (
+                <div className="border border-indigo-100 rounded-lg p-4 bg-indigo-50/20 space-y-3">
+                    <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-gray-700">
+                            Included in Preset ({currentDefaults.length} Roles):
+                        </span>
+                        <span className="text-[11px] text-indigo-600 font-medium">
+                            To modify, switch to "Customize Roles"
+                        </span>
+                    </div>
+                    <div className="max-h-56 overflow-y-auto pr-2 space-y-2">
+                        {currentDefaults
+                            .map((id) => AZURE_AD_ROLES.find((r) => r.id === id))
+                            .filter((r): r is typeof AZURE_AD_ROLES[number] => !!r)
+                            .sort((a, b) => a.displayName.localeCompare(b.displayName, 'de', { sensitivity: 'base' }))
+                            .map((role) => {
+                                const allowed = isRoleAllowed(role.id);
+                                return (
+                                    <div
+                                        key={role.id}
+                                        className={`flex items-start p-2.5 rounded-lg border bg-white ${
+                                            allowed ? 'border-gray-200' : 'border-amber-200 bg-amber-50/40 opacity-70'
+                                        }`}
+                                    >
+                                        <div className="flex items-center h-4 mt-0.5">
+                                            <input
+                                                type="checkbox"
+                                                checked={allowed}
+                                                readOnly
+                                                className="h-4 w-4 text-indigo-600 border-gray-300 rounded"
+                                            />
+                                        </div>
+                                        <div className="ml-3 text-xs flex-1 min-w-0">
+                                            <span className="font-bold text-gray-900">{role.displayName}</span>
+                                            {!allowed && (
+                                                <span className="text-[10px] text-amber-700 font-semibold ml-2">
+                                                    (Unavailable in relationship)
+                                                </span>
+                                            )}
+                                            <p className="text-gray-500 mt-0.5 line-clamp-1">{role.description}</p>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                    </div>
+                </div>
+            )}
+
             {!useDefault && (
                  <div className="border border-gray-200 rounded-lg p-4 bg-white">
                     <div className="flex flex-wrap gap-4 justify-between items-center mb-4">

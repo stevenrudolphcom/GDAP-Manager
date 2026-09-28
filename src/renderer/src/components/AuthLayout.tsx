@@ -73,39 +73,43 @@ const AuthLayout: React.FC<{ children: React.ReactNode; topRightContent?: React.
     const name = account?.name; // Now correctly uses the `name` property
 
     return (
-        <div
-            className={`min-h-screen bg-gray-50 text-gray-800 flex flex-col items-center p-4 relative ${
-                isAuthenticated ? 'justify-start' : 'justify-center'
-            }`}
-        >
-            <div className="absolute top-4 left-4 rounded-md border border-gray-200 bg-white/90 px-3 py-2 text-xs text-gray-700 shadow-sm space-y-1">
-                <div className="font-semibold">
-                    Root-Version: {APP_CONFIG.ROOT_VERSION} <span className="font-normal text-gray-600">(Autor: {APP_CONFIG.ROOT_AUTHOR})</span>
-                </div>
-                <div className="font-semibold">
-                    Sub-Version: {APP_CONFIG.SUB_VERSION} <span className="font-normal text-gray-600">(Contributor: {APP_CONFIG.SUB_CONTRIBUTOR})</span>
-                </div>
-            </div>
-
-            {isAuthenticated && (
-                <header className="w-full flex justify-end items-start gap-4 pb-4">
-                    {topRightContent && (
-                        <div className="flex-shrink-0">{topRightContent}</div>
-                    )}
-                    <div className="text-right">
-                        <p className="text-sm font-semibold text-gray-800">{name}</p>
-                        <SignOutButton onSignOut={handleSignOut} />
+        <div className="min-h-screen bg-gray-50 text-gray-800 flex flex-col items-center p-4 sm:p-6">
+            <div className="w-[95%] flex flex-col flex-grow">
+                <header className="w-full flex justify-between items-start gap-4 pb-4">
+                    <div className="rounded-md border border-gray-200 bg-white/90 px-3 py-2 text-xs text-gray-700 shadow-sm space-y-1">
+                        <div className="font-semibold">
+                            Root-Version: {APP_CONFIG.ROOT_VERSION} <span className="font-normal text-gray-600">(Autor: {APP_CONFIG.ROOT_AUTHOR})</span>
+                        </div>
+                        <div className="font-semibold">
+                            Sub-Version: {APP_CONFIG.SUB_VERSION} <span className="font-normal text-gray-600">(Contributor: {APP_CONFIG.SUB_CONTRIBUTOR})</span>
+                        </div>
                     </div>
-                </header>
-            )}
 
-            {isAuthenticated ? children : (
-                <div className="text-center">
-                    <h1 className="text-3xl font-bold text-gray-900 mb-4">Welcome to GDAP Creator</h1>
-                    <p className="text-gray-600 mb-8">Please sign in to continue.</p>
-                    <SignInButton />
-                </div>
-            )}
+                    {isAuthenticated && (
+                        <div className="flex items-start gap-4">
+                            {topRightContent && (
+                                <div className="flex-shrink-0">{topRightContent}</div>
+                            )}
+                            <div className="text-right">
+                                <p className="text-sm font-semibold text-gray-800">{name}</p>
+                                <SignOutButton onSignOut={handleSignOut} />
+                            </div>
+                        </div>
+                    )}
+                </header>
+
+                {isAuthenticated ? (
+                    <div className="w-full flex-grow flex flex-col">
+                        {children}
+                    </div>
+                ) : (
+                    <div className="flex-grow flex flex-col items-center justify-center text-center">
+                        <h1 className="text-3xl font-bold text-gray-900 mb-4">Welcome to GDAP Creator</h1>
+                        <p className="text-gray-600 mb-8">Please sign in to continue.</p>
+                        <SignInButton />
+                    </div>
+                )}
+            </div>
         </div>
     );
 };

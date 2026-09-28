@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { DelegatedAdminRelationship, DelegatedAdminAccessAssignment, UnifiedRole, SecurityGroupSearchResult } from '../types';
 import {
     getGDAPAssignmentsWithGroupDisplayNames,
+    getGDAPSingleAccessAssignment,
     createGDAPAccessAssignment,
     updateGDAPAccessAssignment,
     deleteGDAPAccessAssignment,
@@ -9,7 +10,7 @@ import {
     getTenantOnMicrosoftDomain,
     searchSecurityGroups
 } from '../services/graphService';
-import { AZURE_AD_ROLES, GROUP_TEMPLATES } from '../constants';
+import { AZURE_AD_ROLES, GROUP_TEMPLATES, DEFAULT_ROLE_IDS } from '../constants';
 import RoleSelector from './RoleSelector';
 import { useDebounce } from '../hooks/useDebounce';
 import SpinnerIcon from './icons/SpinnerIcon';
@@ -21,11 +22,21 @@ import SearchIcon from './icons/SearchIcon';
 
 interface AssignmentEditorProps {
     relationship: DelegatedAdminRelationship | null;
-    getAccessToken: () => Promise<string>;
+    getAccessToken?: () => Promise<string>;
     onUpdateRelationship: (relationship: DelegatedAdminRelationship) => void;
-    onAssignmentsLoaded?: (relationshipId: string, count: number, groupNames?: string[]) => void;
+    onAssignmentsLoaded?: (relationshipId: string, count: number, groupNames?: string[], assignments?: DelegatedAdminAccessAssignment[]) => void;
     allRelationshipGroupNames?: Record<string, string[]>;
+    initialEditingAssignmentId?: string | null;
+    onBackToGroupOverview?: () => void;
 }
+
+const defaultGetAccessToken = async (): Promise<string> => {
+    const response = await window.electronAPI.getToken();
+    if (!response?.accessToken) {
+        throw new Error('Failed to get access token.');
+    }
+    return response.accessToken;
+};
 
 const getGroupBaseName = (displayName: string): string => {
     const m = displayName.match(/^(.*?)(-[A-Z]{1,4})$/i);
@@ -94,18 +105,31 @@ const formatToDMY = (dateString: string | undefined): string => {
     return `${day}/${month}/${year}`;
 };
 
-const AssignmentForm: React.FC<{
+export const AssignmentForm: React.FC<{
     relationshipId: string;
     existingAssignment?: DelegatedAdminAccessAssignment | null;
-    onSave: () => void;
+    onSave: (savedAssignment?: DelegatedAdminAccessAssignment) => void;
     onCancel: () => void;
-    getAccessToken: () => Promise<string>;
+    getAccessToken?: () => Promise<string>;
     allowedRoleIds?: string[];
     usedSecurityGroupIds?: string[];
     prefillGroupDisplayName?: string;
-}> = ({ relationshipId, existingAssignment, onSave, onCancel, getAccessToken, allowedRoleIds, usedSecurityGroupIds = [], prefillGroupDisplayName }) => {
+}> = ({
+    relationshipId,
+    existingAssignment,
+    onSave,
+    onCancel,
+    getAccessToken: propGetAccessToken,
+    allowedRoleIds,
+    usedSecurityGroupIds = [],
+    prefillGroupDisplayName,
+}) => {
+    const getAccessToken = propGetAccessToken || defaultGetAccessToken;
     const [securityGroupId, setSecurityGroupId] = useState(existingAssignment?.accessContainer.accessContainerId || '');
     const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>(existingAssignment?.accessDetails.unifiedRoles.map(r => r.roleDefinitionId) || []);
+    const [userPresets, setUserPresets] = useState<Record<string, string[]>>({});
+    const [isSavingPreset, setIsSavingPreset] = useState(false);
+    const [presetNameInput, setPresetNameInput] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [templateWarning, setTemplateWarning] = useState<string | null>(null);
@@ -120,6 +144,182 @@ const AssignmentForm: React.FC<{
     const [prefillSelectionApplied, setPrefillSelectionApplied] = useState(!prefillGroupDisplayName);
     const [prefillFallbackTried, setPrefillFallbackTried] = useState(false);
     const [lastCompletedSearchTerm, setLastCompletedSearchTerm] = useState<string | null>(null);
+
+    const currentGroupName = selectedGroupDisplayName || existingAssignment?.accessContainer.displayName || groupSearchTerm || '';
+
+    useEffect(() => {
+        let isMounted = true;
+        const loadPresets = async () => {
+            try {
+                const presets = await window.electronAPI.loadRolePresets();
+                if (isMounted && presets) {
+                    setUserPresets(presets);
+                }
+            } catch (err) {
+                console.error('Failed to load role presets:', err);
+            }
+        };
+        void loadPresets();
+        return () => {
+            isMounted = false;
+        };
+    }, []);
+
+    // Merge built-in templates with user customizations into a unified template list
+    const unifiedTemplates = useMemo(() => {
+        const list: Array<{
+            key: string;
+            name: string;
+            roleIds: string[];
+            isBuiltIn: boolean;
+            isCustomized: boolean;
+            color: string;
+        }> = [];
+
+        const lowerUserPresetsMap = new Map<string, { originalKey: string; roleIds: string[] }>();
+        Object.entries(userPresets).forEach(([k, v]) => {
+            lowerUserPresetsMap.set(k.toLowerCase(), { originalKey: k, roleIds: v });
+        });
+
+        const handledUserKeys = new Set<string>();
+
+        // 1. Built-in templates (overridden if present in userPresets)
+        Object.entries(GROUP_TEMPLATES).forEach(([builtInKeyLower, template]) => {
+            const userOverride =
+                lowerUserPresetsMap.get(builtInKeyLower) ||
+                lowerUserPresetsMap.get(template.name.toLowerCase());
+            const hasOverride = !!userOverride;
+            const roleIds = userOverride ? userOverride.roleIds : template.roleIds;
+            if (userOverride) {
+                handledUserKeys.add(userOverride.originalKey.toLowerCase());
+            }
+
+            list.push({
+                key: template.name,
+                name: template.name,
+                roleIds,
+                isBuiltIn: true,
+                isCustomized: hasOverride,
+                color: buildTemplateColor(template.name),
+            });
+        });
+
+        // 2. Custom user presets not matching any built-in template
+        Object.entries(userPresets).forEach(([presetName, roleIds]) => {
+            if (!handledUserKeys.has(presetName.toLowerCase())) {
+                list.push({
+                    key: presetName,
+                    name: presetName,
+                    roleIds,
+                    isBuiltIn: false,
+                    isCustomized: true,
+                    color: buildTemplateColor(presetName),
+                });
+            }
+        });
+
+        return list.sort((a, b) => a.name.localeCompare(b.name, 'de', { sensitivity: 'base' }));
+    }, [userPresets]);
+
+    // Find the template that matches the current security group's name
+    const matchingTemplateName = useMemo(() => {
+        if (!currentGroupName || currentGroupName === 'Unnamed Group') return null;
+        const normalized = currentGroupName.toLowerCase().trim();
+        const base = getGroupBaseName(currentGroupName).toLowerCase().trim();
+
+        // Check exact or base match against unified templates
+        const exact = unifiedTemplates.find(
+            (t) => t.name.toLowerCase() === normalized || t.name.toLowerCase() === base
+        );
+        if (exact) return exact.name;
+
+        // Check substring/prefix match
+        const substring = unifiedTemplates.find((t) => {
+            const tLower = t.name.toLowerCase();
+            return normalized.includes(tLower) || tLower.includes(base);
+        });
+        return substring ? substring.name : null;
+    }, [currentGroupName, unifiedTemplates]);
+
+    const activePresetTargetName = useMemo(() => {
+        if (appliedTemplateName) return appliedTemplateName;
+        const base = getGroupBaseName(currentGroupName);
+        if (base && base !== 'Unnamed Group' && base.trim().length > 0) return base;
+        return 'Default';
+    }, [appliedTemplateName, currentGroupName]);
+
+    const activeTemplate = useMemo(() => {
+        return (
+            unifiedTemplates.find((t) => t.name.toLowerCase() === activePresetTargetName.toLowerCase()) ||
+            null
+        );
+    }, [unifiedTemplates, activePresetTargetName]);
+
+    // Empty list (not null) so RoleSelector does not fall back to DEFAULT_ROLE_IDS when no preset exists
+    const activePresetRoles = useMemo(() => {
+        return activeTemplate ? activeTemplate.roleIds : [];
+    }, [activeTemplate]);
+
+    const handleSaveDefaults = async (roleIds: string[]) => {
+        try {
+            const targetName = activePresetTargetName;
+            const res = await window.electronAPI.saveRolePreset(targetName, roleIds);
+            if (res?.presets) {
+                setUserPresets(res.presets);
+            } else {
+                setUserPresets(prev => ({ ...prev, [targetName]: roleIds }));
+            }
+            await window.electronAPI.saveDefaultRoles(roleIds);
+            setAppliedTemplateName(targetName);
+            setTemplateWarning(null);
+        } catch (err: any) {
+            console.error('Failed to save preset:', err);
+            setTemplateWarning(err.message || 'Failed to save preset.');
+        }
+    };
+
+    const handleResetDefaults = async () => {
+        try {
+            if (activeTemplate?.isBuiltIn && activeTemplate.isCustomized) {
+                const res = await window.electronAPI.deleteRolePreset(activeTemplate.name);
+                if (res?.presets) {
+                    setUserPresets(res.presets);
+                } else {
+                    setUserPresets(prev => {
+                        const next = { ...prev };
+                        delete next[activeTemplate.name];
+                        return next;
+                    });
+                }
+                const originalTemplate = Object.values(GROUP_TEMPLATES).find(
+                    t => t.name.toLowerCase() === activeTemplate.name.toLowerCase()
+                );
+                if (originalTemplate) {
+                    applyRoleList(originalTemplate.name, originalTemplate.roleIds);
+                }
+            } else if (appliedTemplateName && userPresets[appliedTemplateName]) {
+                const res = await window.electronAPI.deleteRolePreset(appliedTemplateName);
+                if (res?.presets) {
+                    setUserPresets(res.presets);
+                } else {
+                    setUserPresets(prev => {
+                        const next = { ...prev };
+                        delete next[appliedTemplateName];
+                        return next;
+                    });
+                }
+                await window.electronAPI.resetDefaultRoles();
+                setSelectedRoleIds(DEFAULT_ROLE_IDS);
+                setAppliedTemplateName(null);
+            } else {
+                await window.electronAPI.resetDefaultRoles();
+                setSelectedRoleIds(DEFAULT_ROLE_IDS);
+                setAppliedTemplateName(null);
+            }
+        } catch (err) {
+            console.error('Failed to reset default roles:', err);
+        }
+    };
 
     const debouncedGroupSearchTerm = useDebounce(groupSearchTerm, 300);
     const sortedGroupOptions = useMemo(
@@ -175,7 +375,7 @@ const AssignmentForm: React.FC<{
         setSelectedGroupDisplayName(group.displayName);
         setGroupSearchTerm(group.displayName);
         setGroupSearchError(null);
-        autoApplyTemplateByGroupName(group.displayName);
+        autoApplyPresetOrTemplate(group.displayName);
     };
 
     useEffect(() => {
@@ -228,10 +428,26 @@ const AssignmentForm: React.FC<{
             setError('Security Group ID and at least one role are required.');
             return;
         }
+
+        // Validate selected roles against allowed roles of the relationship
+        if (allowedRoleIds && allowedRoleIds.length > 0) {
+            const disallowedRoleIds = selectedRoleIds.filter(id => !allowedRoleIds.includes(id));
+            if (disallowedRoleIds.length > 0) {
+                const disallowedRoleNames = disallowedRoleIds.map(
+                    id => AZURE_AD_ROLES.find(r => r.id === id)?.displayName || id
+                );
+                setError(
+                    `The following role${disallowedRoleIds.length > 1 ? 's are' : ' is'} not authorized in this GDAP relationship and cannot be assigned: ${disallowedRoleNames.join(', ')}`
+                );
+                return;
+            }
+        }
+
         setIsSubmitting(true);
         setError(null);
         try {
             const token = await getAccessToken();
+            let savedResult: DelegatedAdminAccessAssignment | null = null;
             if (existingAssignment) {
                 const etag = existingAssignment['@odata.etag'];
                 if (!etag) {
@@ -239,40 +455,47 @@ const AssignmentForm: React.FC<{
                     setIsSubmitting(false);
                     return;
                 }
-                await updateGDAPAccessAssignment(relationshipId, existingAssignment.id, selectedRoleIds, etag, token);
+                const updated = await updateGDAPAccessAssignment(relationshipId, existingAssignment.id, selectedRoleIds, etag, token);
+                savedResult = {
+                    ...updated,
+                    accessContainer: {
+                        ...updated.accessContainer,
+                        displayName: selectedGroupDisplayName || existingAssignment.accessContainer.displayName || 'Security Group',
+                    },
+                };
             } else {
-                await createGDAPAccessAssignment(relationshipId, securityGroupId, selectedRoleIds, token);
+                const created = await createGDAPAccessAssignment(relationshipId, securityGroupId, selectedRoleIds, token);
+                savedResult = {
+                    ...created,
+                    accessContainer: {
+                        ...created.accessContainer,
+                        displayName: selectedGroupDisplayName || 'Security Group',
+                    },
+                };
             }
-            onSave();
+            onSave(savedResult || undefined);
         } catch (err: any) {
-            setError(err.message || 'An error occurred.');
+            let errorMsg = err.message || 'An error occurred.';
+            // Provide human-friendly explanations for common Graph errors
+            if (errorMsg.includes('A condition set for the request failed')) {
+                if (allowedRoleIds && allowedRoleIds.length > 0) {
+                    const disallowed = selectedRoleIds.filter(id => !allowedRoleIds.includes(id));
+                    if (disallowed.length > 0) {
+                        const names = disallowed.map(id => AZURE_AD_ROLES.find(r => r.id === id)?.displayName || id);
+                        errorMsg = `Assignment rejected: The relationship does not contain the role(s): ${names.join(', ')}.`;
+                    } else {
+                        errorMsg = 'Precondition failed (412): The assignment data on the server has changed. Please refresh the page and try again.';
+                    }
+                } else {
+                    errorMsg = 'Precondition failed (412): Either the assignment was modified elsewhere (stale ETag) or one of the roles is not granted in the GDAP relationship. Please refresh and retry.';
+                }
+            }
+            setError(errorMsg);
         } finally {
             setIsSubmitting(false);
         }
     };
 
-    const templateEntries = useMemo(() => Object.entries(GROUP_TEMPLATES), []);
-    const templateColorMap = useMemo(
-        () =>
-            Object.fromEntries(
-                templateEntries.map(([key]) => [key, buildTemplateColor(key)])
-            ) as Record<string, string>,
-        [templateEntries]
-    );
-    const templateMatchers = useMemo(
-        () =>
-            templateEntries
-                .map(([key, template]) => ({
-                    key,
-                    variants: [key.toLowerCase(), template.name.toLowerCase()]
-                }))
-                .sort((a, b) => {
-                    const longestA = Math.max(...a.variants.map(v => v.length));
-                    const longestB = Math.max(...b.variants.map(v => v.length));
-                    return longestB - longestA;
-                }),
-        [templateEntries]
-    );
     const sortedSelectedRoleIds = useMemo(
         () =>
             [...selectedRoleIds].sort((a, b) => {
@@ -283,36 +506,122 @@ const AssignmentForm: React.FC<{
         [selectedRoleIds]
     );
 
-    const applyTemplate = (templateKey: string) => {
-        const selectedTemplate = GROUP_TEMPLATES[templateKey];
-        if (!selectedTemplate) {
-            setError(`Template not found: ${templateKey}`);
-            return;
-        }
-        let validRoles = selectedTemplate.roleIds;
+    const applyRoleList = (presetOrTemplateName: string, roleIds: string[]) => {
+        let validRoles = roleIds;
         let droppedRoleIds: string[] = [];
         if (allowedRoleIds) {
-            validRoles = selectedTemplate.roleIds.filter(id => allowedRoleIds.includes(id));
-            droppedRoleIds = selectedTemplate.roleIds.filter(id => !allowedRoleIds.includes(id));
+            validRoles = roleIds.filter(id => allowedRoleIds.includes(id));
+            droppedRoleIds = roleIds.filter(id => !allowedRoleIds.includes(id));
         }
         setSelectedRoleIds(validRoles);
-        setAppliedTemplateName(selectedTemplate.name);
+        setAppliedTemplateName(presetOrTemplateName);
         if (droppedRoleIds.length > 0) {
             const droppedNames = droppedRoleIds.map(id => AZURE_AD_ROLES.find(r => r.id === id)?.displayName || id).join(', ');
-            setTemplateWarning(`Roles not available: ${droppedNames}.`);
+            setTemplateWarning(`Roles not available in this relationship: ${droppedNames}.`);
         } else {
             setTemplateWarning(null);
         }
     };
 
-    const autoApplyTemplateByGroupName = (groupDisplayName: string) => {
+    const autoApplyPresetOrTemplate = (groupDisplayName: string) => {
         const normalizedGroupName = groupDisplayName.toLowerCase();
-        const matchedTemplate = templateMatchers.find((templateMatcher) =>
-            templateMatcher.variants.some((variant) => normalizedGroupName.includes(variant))
-        );
+        const baseName = getGroupBaseName(groupDisplayName).toLowerCase();
 
-        if (matchedTemplate) {
-            applyTemplate(matchedTemplate.key);
+        const matched = unifiedTemplates.find((t) => {
+            const tLower = t.name.toLowerCase();
+            return normalizedGroupName === tLower || baseName === tLower || normalizedGroupName.includes(tLower);
+        });
+
+        if (matched) {
+            applyRoleList(matched.name, matched.roleIds);
+        }
+    };
+
+    const handleOpenSavePreset = () => {
+        setPresetNameInput(activePresetTargetName);
+        setIsSavingPreset(true);
+    };
+
+    const handleConfirmSavePreset = async () => {
+        const trimmed = presetNameInput.trim();
+        if (!trimmed) return;
+        if (selectedRoleIds.length === 0) {
+            setTemplateWarning('Select at least one role before saving as a preset.');
+            return;
+        }
+
+        try {
+            const res = await window.electronAPI.saveRolePreset(trimmed, selectedRoleIds);
+            if (res?.presets) {
+                setUserPresets(res.presets);
+            } else {
+                setUserPresets(prev => ({ ...prev, [trimmed]: selectedRoleIds }));
+            }
+            await window.electronAPI.saveDefaultRoles(selectedRoleIds);
+            setAppliedTemplateName(trimmed);
+            setIsSavingPreset(false);
+            setTemplateWarning(null);
+        } catch (err: any) {
+            console.error('Failed to save preset:', err);
+            setTemplateWarning(err.message || 'Failed to save preset.');
+        }
+    };
+
+    const handleDeleteOrRevertTemplate = async (
+        template: { name: string; isBuiltIn: boolean; isCustomized: boolean; roleIds: string[] },
+        e: React.MouseEvent
+    ) => {
+        e.stopPropagation();
+        if (template.isBuiltIn && template.isCustomized) {
+            const originalTemplate = Object.values(GROUP_TEMPLATES).find(
+                (t) => t.name.toLowerCase() === template.name.toLowerCase()
+            );
+            const originalCount = originalTemplate ? originalTemplate.roleIds.length : 'default';
+            if (
+                !window.confirm(
+                    `Revert template "${template.name}" back to built-in default (${originalCount} roles)?`
+                )
+            ) {
+                return;
+            }
+
+            try {
+                const res = await window.electronAPI.deleteRolePreset(template.name);
+                if (res?.presets) {
+                    setUserPresets(res.presets);
+                } else {
+                    setUserPresets((prev) => {
+                        const next = { ...prev };
+                        delete next[template.name];
+                        return next;
+                    });
+                }
+                if (appliedTemplateName === template.name && originalTemplate) {
+                    applyRoleList(originalTemplate.name, originalTemplate.roleIds);
+                }
+            } catch (err) {
+                console.error('Failed to revert template:', err);
+            }
+        } else if (!template.isBuiltIn) {
+            if (!window.confirm(`Delete preset "${template.name}"?`)) return;
+
+            try {
+                const res = await window.electronAPI.deleteRolePreset(template.name);
+                if (res?.presets) {
+                    setUserPresets(res.presets);
+                } else {
+                    setUserPresets((prev) => {
+                        const next = { ...prev };
+                        delete next[template.name];
+                        return next;
+                    });
+                }
+                if (appliedTemplateName === template.name) {
+                    setAppliedTemplateName(null);
+                }
+            } catch (err) {
+                console.error('Failed to delete preset:', err);
+            }
         }
     };
 
@@ -415,81 +724,157 @@ const AssignmentForm: React.FC<{
                 </div>
             )}
 
-
-            {existingAssignment && selectedRoleIds.length > 0 && (
-                <div className="border border-gray-200 rounded-lg p-4 bg-white">
-                    <h4 className="text-sm font-medium text-gray-700 mb-3">Assigned Roles ({selectedRoleIds.length})</h4>
-                    <div className="max-h-60 overflow-y-auto pr-2 space-y-2">
-                        {sortedSelectedRoleIds.map(roleId => {
-                            const role = AZURE_AD_ROLES.find(r => r.id === roleId);
-                            if (!role) return null;
-                            return (
-                                <div key={roleId} className="relative flex items-start p-3 rounded-md hover:bg-gray-50">
-                                    <div className="flex items-center h-5">
-                                        <input type="checkbox" checked readOnly className="h-4 w-4 text-indigo-600 border-gray-300 rounded" />
-                                    </div>
-                                    <div className="ml-3 text-sm">
-                                        <span className="font-medium text-gray-900">{role.displayName}</span>
-                                        <p className="text-gray-500">{role.description}</p>
-                                    </div>
-                                </div>
-                            );
-                        })}
+            {/* Presets & Templates Section (Visible for both New and Existing Assignments) */}
+            <div className="p-3.5 bg-white border border-gray-200 rounded-xl space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                        <span className="text-xs font-black uppercase tracking-wider text-gray-800">
+                            Templates & Presets
+                        </span>
+                        <p className="text-[11px] text-gray-500">
+                            Click a template to apply & overwrite roles. Customized templates show an orange dot (●).
+                        </p>
                     </div>
-                </div>
-            )}
-
-            {!existingAssignment && (
-                <div className="flex flex-col space-y-2">
-                    <div className="flex flex-wrap items-center gap-2 pb-1">
-                        <span className="text-sm font-medium text-gray-700">Templates:</span>
-                        {templateEntries.map(([key, template]) => (
-                            <button
-                                key={key}
-                                type="button"
-                                onClick={() => applyTemplate(key)}
-                                style={{ backgroundColor: templateColorMap[key] }}
-                                className={`px-3 py-1 text-xs font-bold text-white rounded-full transition-opacity whitespace-nowrap hover:opacity-90 border-4 ${appliedTemplateName === template.name ? 'border-gray-900' : 'border-transparent'}`}
-                            >
-                                {template.name}
-                            </button>
-                        ))}
-                    </div>
-                    {templateWarning && <div className="p-2 bg-yellow-50 text-yellow-800 text-xs border border-yellow-200 rounded">{templateWarning}</div>}
-                    {appliedTemplateName && selectedRoleIds.length > 0 && (
-                        <div className="border border-gray-200 rounded-lg p-4 bg-white">
-                            <h4 className="text-sm font-medium text-gray-700 mb-3">Included Roles – {appliedTemplateName} ({selectedRoleIds.length})</h4>
-                            <div className="max-h-60 overflow-y-auto pr-2 space-y-2">
-                                {sortedSelectedRoleIds.map(roleId => {
-                                    const role = AZURE_AD_ROLES.find(r => r.id === roleId);
-                                    if (!role) return null;
-                                    return (
-                                        <div key={roleId} className="relative flex items-start p-3 rounded-md hover:bg-gray-50">
-                                            <div className="flex items-center h-5">
-                                                <input type="checkbox" checked readOnly className="h-4 w-4 text-indigo-600 border-gray-300 rounded" />
-                                            </div>
-                                            <div className="ml-3 text-sm">
-                                                <span className="font-medium text-gray-900">{role.displayName}</span>
-                                                <p className="text-gray-500">{role.description}</p>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
+                    {!isSavingPreset && (
+                        <button
+                            type="button"
+                            onClick={handleOpenSavePreset}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors shadow-xs"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
+                            </svg>
+                            <span>Save Current as Preset / Template</span>
+                        </button>
                     )}
                 </div>
-            )}
+
+                {/* Save Preset Inline Prompt */}
+                {isSavingPreset && (
+                    <div className="p-3 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-2 animate-in fade-in">
+                        <label className="block text-xs font-bold text-indigo-900">
+                            Save current selection ({selectedRoleIds.length} roles) into template:
+                        </label>
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="text"
+                                value={presetNameInput}
+                                onChange={(e) => setPresetNameInput(e.target.value)}
+                                placeholder="Template/Preset Name (e.g. CSCT_M365_Compliance)"
+                                className="flex-1 px-3 py-1.5 text-xs border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white font-medium"
+                                autoFocus
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        handleConfirmSavePreset();
+                                    } else if (e.key === 'Escape') {
+                                        setIsSavingPreset(false);
+                                    }
+                                }}
+                            />
+                            <button
+                                type="button"
+                                onClick={handleConfirmSavePreset}
+                                className="px-3 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-xs"
+                            >
+                                Save Template
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setIsSavingPreset(false)}
+                                className="px-2.5 py-1.5 text-xs font-bold text-gray-600 bg-white border border-gray-300 hover:bg-gray-50 rounded-lg transition-colors"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Unified Templates Grid */}
+                <div className="flex flex-wrap gap-2 pt-1">
+                    {unifiedTemplates.map((template) => {
+                        const isApplied = appliedTemplateName?.toLowerCase() === template.name.toLowerCase();
+                        const isMatchingGroup = matchingTemplateName?.toLowerCase() === template.name.toLowerCase();
+                        return (
+                            <div
+                                key={template.name}
+                                className={`inline-flex items-center rounded-lg border-2 transition-all ${
+                                    isApplied
+                                        ? 'border-gray-900 shadow-md ring-2 ring-gray-900'
+                                        : isMatchingGroup
+                                        ? 'border-indigo-600 shadow-md ring-2 ring-indigo-500'
+                                        : 'border-transparent shadow-xs hover:opacity-90'
+                                }`}
+                                style={{
+                                    backgroundColor: template.color,
+                                }}
+                            >
+                                <button
+                                    type="button"
+                                    onClick={() => applyRoleList(template.name, template.roleIds)}
+                                    className="px-2.5 py-1 text-xs font-bold text-white flex items-center gap-1.5"
+                                    title={`Apply "${template.name}" (${template.roleIds.length} roles)${
+                                        isMatchingGroup ? ' [Matches this group name]' : ''
+                                    }${template.isCustomized ? ' - Customized' : ''}`}
+                                >
+                                    {isMatchingGroup && !isApplied && (
+                                        <span
+                                            className="inline-block w-2 h-2 rounded-full bg-indigo-200 ring-1 ring-white animate-pulse"
+                                            title="Matching template for this security group"
+                                        />
+                                    )}
+                                    <span>{template.name}</span>
+                                    <span className="text-[10px] px-1.5 py-0.2 rounded-full font-mono bg-black/25 text-white">
+                                        {template.roleIds.length}
+                                    </span>
+                                    {template.isCustomized && (
+                                        <span
+                                            className="inline-block w-2 h-2 rounded-full bg-amber-300"
+                                            title="Customized role set"
+                                        />
+                                    )}
+                                </button>
+                                {template.isCustomized && (
+                                    <button
+                                        type="button"
+                                        onClick={(e) => handleDeleteOrRevertTemplate(template, e)}
+                                        className="pr-2 pl-0.5 py-1 text-xs text-white/80 hover:text-white transition-colors"
+                                        title={
+                                            template.isBuiltIn
+                                                ? `Revert "${template.name}" back to built-in default`
+                                                : `Delete custom preset "${template.name}"`
+                                        }
+                                    >
+                                        {template.isBuiltIn ? '↺' : '✕'}
+                                    </button>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+
+                {templateWarning && (
+                    <div className="p-2 bg-yellow-50 text-yellow-800 text-xs border border-yellow-200 rounded-lg">
+                        {templateWarning}
+                    </div>
+                )}
+            </div>
 
             <div>
-                 <h4 className="text-md font-bold text-gray-800 mb-2">Assign Roles</h4>
+                 <h4 className="text-md font-bold text-gray-800 mb-2">Assign Roles ({selectedRoleIds.length} selected)</h4>
                  <RoleSelector
                     selectedRoleIds={selectedRoleIds}
                     onSelectedRoleIdsChange={setSelectedRoleIds}
-                    userDefaultRoles={null}
-                    onSaveDefaults={async () => {}}
-                    onResetDefaults={async () => {}}
+                    userDefaultRoles={activePresetRoles}
+                    onSaveDefaults={handleSaveDefaults}
+                    onResetDefaults={handleResetDefaults}
                     allowedRoleIds={allowedRoleIds}
+                    saveButtonLabel={`Save as "${activePresetTargetName}" Preset`}
+                    defaultOptionLabel={
+                        activeTemplate
+                            ? `Use "${activePresetTargetName}" Preset`
+                            : `Use "${activePresetTargetName}" Preset (not defined)`
+                    }
                 />
             </div>
 
@@ -505,7 +890,16 @@ const AssignmentForm: React.FC<{
     );
 };
 
-const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAccessToken, onUpdateRelationship, onAssignmentsLoaded, allRelationshipGroupNames = {} }) => {
+const AssignmentEditor: React.FC<AssignmentEditorProps> = ({
+    relationship,
+    getAccessToken: propGetAccessToken,
+    onUpdateRelationship,
+    onAssignmentsLoaded,
+    allRelationshipGroupNames = {},
+    initialEditingAssignmentId,
+    onBackToGroupOverview,
+}) => {
+    const getAccessToken = propGetAccessToken || defaultGetAccessToken;
     const [assignments, setAssignments] = useState<DelegatedAdminAccessAssignment[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [isUpdatingAutoExtend, setIsUpdatingAutoExtend] = useState(false);
@@ -517,6 +911,8 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
     const [tenantOnMicrosoftDomain, setTenantOnMicrosoftDomain] = useState<string | null>(null);
     const [isLoadingTenantNamespace, setIsLoadingTenantNamespace] = useState(false);
     const [isProcessingId, setIsProcessingId] = useState<string | null>(null);
+    const [refreshingAssignmentId, setRefreshingAssignmentId] = useState<string | null>(null);
+    const [refreshedAssignmentId, setRefreshedAssignmentId] = useState<string | null>(null);
     const [expandedAssignmentId, setExpandedAssignmentId] = useState<string | null>(null);
     const [showDisableAutoExtendConfirm, setShowDisableAutoExtendConfirm] = useState(false);
 
@@ -594,25 +990,56 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
         return relationship.accessDetails.unifiedRoles.map(r => r.roleDefinitionId);
     }, [relationship]);
 
-    const fetchAssignments = useCallback(async () => {
+    const fetchAssignments = useCallback(async (forceRefresh = false) => {
         if (!relationship) return;
         setIsLoading(true);
         setError(null);
         setFeedbackMessage(null);
         try {
             const token = await getAccessToken();
-            const data = await getGDAPAssignmentsWithGroupDisplayNames(relationship.id, token);
+            const data = await getGDAPAssignmentsWithGroupDisplayNames(relationship.id, token, forceRefresh);
             setAssignments(data);
             const groupNames = data
                 .map(a => a.accessContainer.displayName)
                 .filter((name): name is string => !!name && name !== 'Name not found');
-            onAssignmentsLoaded?.(relationship.id, data.length, groupNames);
+            onAssignmentsLoaded?.(relationship.id, data.length, groupNames, data);
+            if (initialEditingAssignmentId) {
+                const target = data.find(a => a.id === initialEditingAssignmentId);
+                if (target) {
+                    setEditingAssignment(target);
+                }
+            }
         } catch (err: any) {
             setError(err.message || 'An error occurred.');
         } finally {
             setIsLoading(false);
         }
-    }, [relationship, getAccessToken]);
+    }, [relationship, getAccessToken, onAssignmentsLoaded, initialEditingAssignmentId]);
+
+    const handleRefreshSingleAssignment = async (assignment: DelegatedAdminAccessAssignment) => {
+        if (!relationship) return;
+        setRefreshingAssignmentId(assignment.id);
+        setError(null);
+        try {
+            const token = await getAccessToken();
+            const fresh = await getGDAPSingleAccessAssignment(relationship.id, assignment.id, token);
+            setAssignments(prev => prev.map(a => a.id === assignment.id ? fresh : a));
+            setRefreshedAssignmentId(assignment.id);
+            setTimeout(() => {
+                setRefreshedAssignmentId((prev) => (prev === assignment.id ? null : prev));
+            }, 3000);
+
+            const nextAssignments = assignments.map(a => a.id === assignment.id ? fresh : a);
+            const groupNames = nextAssignments
+                .map(a => a.accessContainer.displayName)
+                .filter((name): name is string => !!name && name !== 'Name not found');
+            onAssignmentsLoaded?.(relationship.id, nextAssignments.length, groupNames, nextAssignments);
+        } catch (err: any) {
+            setError(err.message || 'Failed to refresh assignment.');
+        } finally {
+            setRefreshingAssignmentId(null);
+        }
+    };
 
     useEffect(() => {
         fetchAssignments();
@@ -762,6 +1189,20 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
                     </div>
                 </div>
             )}
+            {onBackToGroupOverview && (
+                <div>
+                    <button
+                        type="button"
+                        onClick={onBackToGroupOverview}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-xl hover:bg-indigo-100 transition-all active:scale-95"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+                        </svg>
+                        <span>Back to Group Search Results</span>
+                    </button>
+                </div>
+            )}
             <header className="flex flex-col md:flex-row md:items-start md:justify-between border-b border-gray-100 pb-6 gap-4">
                 <div className="space-y-1 flex-1 min-w-0">
                     <h2 className="text-2xl font-black text-gray-900 break-words leading-tight" title={displayName}>{displayName}</h2>
@@ -786,7 +1227,7 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
                 <div className="flex flex-col items-end space-y-2 flex-shrink-0">
                     <div className="flex items-center space-x-3 bg-white p-2.5 rounded-2xl border border-gray-200 shadow-sm">
                         <button
-                            onClick={fetchAssignments}
+                            onClick={() => { void fetchAssignments(true); }}
                             disabled={isLoading}
                             className="inline-flex items-center px-3 py-2 text-xs font-black text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-xl hover:bg-indigo-100 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
@@ -832,7 +1273,7 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
                     <div className="flex justify-between items-center">
                         <h3 className="text-xl font-black text-gray-900 tracking-tight">Access Assignments</h3>
                         <div className="flex items-center space-x-2">
-                            <button onClick={fetchAssignments} title="Refresh Assignments" className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-all active:scale-90"><svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 4v5h5M20 20v-5h-5M4 4a14.95 14.95 0 0113.433 4.805M20 20a14.95 14.95 0 01-13.433-4.805" /></svg></button>
+                            <button onClick={() => { void fetchAssignments(true); }} title="Refresh Assignments" className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-all active:scale-90"><svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 4v5h5M20 20v-5h-5M4 4a14.95 14.95 0 0113.433 4.805M20 20a14.95 14.95 0 01-13.433-4.805" /></svg></button>
                             {canHaveAssignments && (
                                 <button onClick={() => handleCreateAssignment()} disabled={isCreating} className="px-4 py-2 text-sm font-black text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-100 transition-all active:scale-95 disabled:opacity-50">New Assignment</button>
                             )}
@@ -918,7 +1359,24 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
                         <div className="animate-in fade-in slide-in-from-top-4 duration-300">
                             <AssignmentForm
                                 relationshipId={relationship.id}
-                                onSave={() => { setIsCreating(false); setPrefillGroupName(null); fetchAssignments(); }}
+                                onSave={(saved) => {
+                                    setIsCreating(false);
+                                    setPrefillGroupName(null);
+                                    if (saved) {
+                                        setAssignments(prev => {
+                                            const next = [...prev.filter(a => a.id !== saved.id), saved];
+                                            const groupNames = next
+                                                .map(a => a.accessContainer.displayName)
+                                                .filter((name): name is string => !!name && name !== 'Name not found');
+                                            onAssignmentsLoaded?.(relationship.id, next.length, groupNames, next);
+                                            return next;
+                                        });
+                                        setFeedbackMessage('Assignment created successfully.');
+                                        setTimeout(() => setFeedbackMessage(null), 4000);
+                                    } else {
+                                        void fetchAssignments(true);
+                                    }
+                                }}
                                 onCancel={() => { setIsCreating(false); setPrefillGroupName(null); }}
                                 getAccessToken={getAccessToken}
                                 allowedRoleIds={allowedRoleIds}
@@ -932,7 +1390,30 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
                         <ul className="grid grid-cols-1 gap-4">
                             {sortedAssignments.map(a => editingAssignment?.id === a.id ? (
                                 <li key={a.id} className="animate-in zoom-in-95 duration-200">
-                                    <AssignmentForm relationshipId={relationship.id} existingAssignment={a} onSave={() => { setEditingAssignment(null); fetchAssignments(); }} onCancel={() => setEditingAssignment(null)} getAccessToken={getAccessToken} allowedRoleIds={allowedRoleIds} />
+                                    <AssignmentForm
+                                        relationshipId={relationship.id}
+                                        existingAssignment={a}
+                                        onSave={(saved) => {
+                                            setEditingAssignment(null);
+                                            if (saved) {
+                                                setAssignments(prev => {
+                                                    const next = prev.map(item => item.id === saved.id ? saved : item);
+                                                    const groupNames = next
+                                                        .map(item => item.accessContainer.displayName)
+                                                        .filter((name): name is string => !!name && name !== 'Name not found');
+                                                    onAssignmentsLoaded?.(relationship.id, next.length, groupNames, next);
+                                                    return next;
+                                                });
+                                                setFeedbackMessage('Assignment updated successfully.');
+                                                setTimeout(() => setFeedbackMessage(null), 4000);
+                                            } else {
+                                                void fetchAssignments(true);
+                                            }
+                                        }}
+                                        onCancel={() => setEditingAssignment(null)}
+                                        getAccessToken={getAccessToken}
+                                        allowedRoleIds={allowedRoleIds}
+                                    />
                                 </li>
                             ) : (
                                 <li key={a.id} className="group border border-gray-200 rounded-2xl bg-white overflow-hidden hover:shadow-xl hover:border-indigo-100 transition-all duration-300">
@@ -949,8 +1430,40 @@ const AssignmentEditor: React.FC<AssignmentEditorProps> = ({ relationship, getAc
                                             </div>
                                         </div>
                                         <div className="flex space-x-2 flex-shrink-0 self-end sm:self-center">
-                                            <button onClick={() => { setEditingAssignment(a); setIsCreating(false); setPrefillGroupName(null); }} disabled={isProcessingId === a.id} className="text-sm px-4 py-2 font-black text-indigo-600 bg-indigo-50 rounded-xl hover:bg-indigo-100 transition-all active:scale-95">Edit</button>
-                                            <button onClick={() => handleRemoveAssignment(a)} disabled={isProcessingId === a.id} className="text-sm px-4 py-2 font-black text-red-600 bg-red-50 rounded-xl hover:bg-red-100 transition-all active:scale-95">
+                                            <button
+                                                type="button"
+                                                onClick={() => handleRefreshSingleAssignment(a)}
+                                                disabled={isProcessingId === a.id || refreshingAssignmentId === a.id}
+                                                className={`text-sm px-3.5 py-2 font-black rounded-xl transition-all active:scale-95 flex items-center gap-1.5 ${
+                                                    refreshedAssignmentId === a.id
+                                                        ? 'bg-green-100 text-green-800 border border-green-300'
+                                                        : 'text-gray-700 bg-gray-100 hover:bg-gray-200'
+                                                }`}
+                                                title="Refresh this security group assignment from Microsoft Graph"
+                                            >
+                                                {refreshingAssignmentId === a.id ? (
+                                                    <>
+                                                        <SpinnerIcon className="animate-spin h-4 w-4 text-indigo-600" />
+                                                        <span>Refreshing...</span>
+                                                    </>
+                                                ) : refreshedAssignmentId === a.id ? (
+                                                    <>
+                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-green-700" viewBox="0 0 20 20" fill="currentColor">
+                                                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                                        </svg>
+                                                        <span>Refreshed!</span>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 4v5h5M20 20v-5h-5M4 4a14.95 14.95 0 0113.433 4.805M20 20a14.95 14.95 0 01-13.433-4.805" />
+                                                        </svg>
+                                                        <span>Refresh</span>
+                                                    </>
+                                                )}
+                                            </button>
+                                            <button onClick={() => { setEditingAssignment(a); setIsCreating(false); setPrefillGroupName(null); }} disabled={isProcessingId === a.id || refreshingAssignmentId === a.id} className="text-sm px-4 py-2 font-black text-indigo-600 bg-indigo-50 rounded-xl hover:bg-indigo-100 transition-all active:scale-95">Edit</button>
+                                            <button onClick={() => handleRemoveAssignment(a)} disabled={isProcessingId === a.id || refreshingAssignmentId === a.id} className="text-sm px-4 py-2 font-black text-red-600 bg-red-50 rounded-xl hover:bg-red-100 transition-all active:scale-95">
                                                 {isProcessingId === a.id ? <SpinnerIcon className="animate-spin h-4 w-4" /> : 'Remove'}
                                             </button>
                                         </div>

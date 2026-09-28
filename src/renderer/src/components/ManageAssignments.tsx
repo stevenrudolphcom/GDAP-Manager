@@ -1,8 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { DelegatedAdminRelationship } from '../types';
-import { GDAPSnapshotProgress, getGDAPRelationshipsSnapshot } from '../services/graphService';
+import { DelegatedAdminRelationship, DelegatedAdminAccessAssignment } from '../types';
+import {
+    GDAPSnapshotProgress,
+    getGDAPRelationshipsSnapshot,
+    getGDAPAssignmentsWithGroupDisplayNames,
+} from '../services/graphService';
 import RelationshipList from './RelationshipList';
 import AssignmentEditor from './AssignmentEditor';
+import GroupAssignmentsOverview from './GroupAssignmentsOverview';
 import LoadingProgressCard from './LoadingProgressCard';
 
 interface ManageAssignmentsProps {
@@ -17,6 +22,7 @@ const ManageAssignments: React.FC<ManageAssignmentsProps> = ({ refreshToken = 0,
     const [error, setError] = useState<string | null>(null);
     const [assignmentCounts, setAssignmentCounts] = useState<Record<string, number>>({});
     const [relationshipGroupNames, setRelationshipGroupNames] = useState<Record<string, string[]>>({});
+    const [assignmentsByRelationshipId, setAssignmentsByRelationshipId] = useState<Record<string, DelegatedAdminAccessAssignment[]>>({});
     const [isPreloading, setIsPreloading] = useState(false);
     const [preloadDone, setPreloadDone] = useState(0);
     const [preloadTotal, setPreloadTotal] = useState(0);
@@ -24,6 +30,12 @@ const ManageAssignments: React.FC<ManageAssignmentsProps> = ({ refreshToken = 0,
     const [loadingCurrent, setLoadingCurrent] = useState(0);
     const [loadingTotal, setLoadingTotal] = useState(0);
     const [loadingLabel, setLoadingLabel] = useState('Collecting active role assignments');
+
+    // Group Search Filter States
+    const [searchMode, setSearchMode] = useState<'relationship' | 'group'>('relationship');
+    const [groupSearchTerm, setGroupSearchTerm] = useState('');
+    const [isAllGroupMatchesSelected, setIsAllGroupMatchesSelected] = useState(false);
+    const [editingAssignmentId, setEditingAssignmentId] = useState<string | null>(null);
 
     const getAccessToken = useCallback(async () => {
         const response = await window.electronAPI.getToken();
@@ -40,6 +52,7 @@ const ManageAssignments: React.FC<ManageAssignmentsProps> = ({ refreshToken = 0,
         setPreloadTotal(rels.length);
         setAssignmentCounts({});
         setRelationshipGroupNames({});
+        setAssignmentsByRelationshipId({});
         setLoadingLabel('Preparing tenant assignment data');
         setLoadingCurrent(baseCurrent);
         setLoadingTotal(baseTotal > 0 ? baseTotal + rels.length : rels.length);
@@ -48,6 +61,7 @@ const ManageAssignments: React.FC<ManageAssignmentsProps> = ({ refreshToken = 0,
             const snapshot = await getGDAPRelationshipsSnapshot(token);
             let nextAssignmentCounts: Record<string, number> = {};
             let nextRelationshipGroupNames: Record<string, string[]> = {};
+            let nextAssignmentsByRelationshipId: Record<string, DelegatedAdminAccessAssignment[]> = snapshot.assignmentsByRelationshipId || {};
             let completed = 0;
 
             for (const relationship of rels) {
@@ -60,9 +74,14 @@ const ManageAssignments: React.FC<ManageAssignmentsProps> = ({ refreshToken = 0,
                     ...nextRelationshipGroupNames,
                     [relationship.id]: snapshot.groupNamesByRelationshipId[relationship.id] || [],
                 };
+                nextAssignmentsByRelationshipId = {
+                    ...nextAssignmentsByRelationshipId,
+                    [relationship.id]: assignments,
+                };
 
                 setAssignmentCounts(nextAssignmentCounts);
                 setRelationshipGroupNames(nextRelationshipGroupNames);
+                setAssignmentsByRelationshipId(nextAssignmentsByRelationshipId);
                 setPreloadDone((prev) => prev + 1);
                 completed += 1;
                 setLoadingCurrent(baseCurrent + completed);
@@ -100,6 +119,8 @@ const ManageAssignments: React.FC<ManageAssignmentsProps> = ({ refreshToken = 0,
             });
             const data = snapshot.relationships;
             setRelationships(data);
+            setAssignmentsByRelationshipId(snapshot.assignmentsByRelationshipId || {});
+            setRelationshipGroupNames(snapshot.groupNamesByRelationshipId || {});
 
             setSelectedRelationship((current) => {
                 if (!current) return current;
@@ -124,6 +145,8 @@ const ManageAssignments: React.FC<ManageAssignmentsProps> = ({ refreshToken = 0,
     useEffect(() => {
         if (refreshToken <= 0) return;
         setSelectedRelationship(null);
+        setIsAllGroupMatchesSelected(false);
+        setEditingAssignmentId(null);
         void fetchRelationships(true);
     }, [fetchRelationships, refreshToken]);
 
@@ -132,12 +155,95 @@ const ManageAssignments: React.FC<ManageAssignmentsProps> = ({ refreshToken = 0,
         setSelectedRelationship(updated);
     };
 
-    const handleAssignmentsLoaded = useCallback((relationshipId: string, count: number, groupNames?: string[]) => {
-        setAssignmentCounts(prev => ({ ...prev, [relationshipId]: count }));
-        if (groupNames) {
-            setRelationshipGroupNames(prev => ({ ...prev, [relationshipId]: groupNames }));
-        }
-    }, []);
+    const handleAssignmentsLoaded = useCallback(
+        (
+            relationshipId: string,
+            count: number,
+            groupNames?: string[],
+            assignments?: DelegatedAdminAccessAssignment[]
+        ) => {
+            setAssignmentCounts(prev => ({ ...prev, [relationshipId]: count }));
+            if (groupNames) {
+                setRelationshipGroupNames(prev => ({ ...prev, [relationshipId]: groupNames }));
+            }
+            if (assignments) {
+                setAssignmentsByRelationshipId(prev => ({ ...prev, [relationshipId]: assignments }));
+            }
+        },
+        []
+    );
+
+    const refreshRelationshipAssignments = useCallback(
+        async (relationshipId: string, optimisticAssignment?: DelegatedAdminAccessAssignment) => {
+            if (optimisticAssignment) {
+                setAssignmentsByRelationshipId((prev) => {
+                    const currentList = prev[relationshipId] || [];
+                    const exists = currentList.some((a) => a.id === optimisticAssignment.id);
+                    const nextList = exists
+                        ? currentList.map((a) => (a.id === optimisticAssignment.id ? optimisticAssignment : a))
+                        : [...currentList, optimisticAssignment];
+                    return {
+                        ...prev,
+                        [relationshipId]: nextList,
+                    };
+                });
+                setRelationshipGroupNames((prev) => {
+                    const groupName = optimisticAssignment.accessContainer.displayName;
+                    const existingNames = prev[relationshipId] || [];
+                    if (groupName && groupName !== 'Name not found' && !existingNames.includes(groupName)) {
+                        return {
+                            ...prev,
+                            [relationshipId]: [...existingNames, groupName],
+                        };
+                    }
+                    return prev;
+                });
+                return;
+            }
+
+            try {
+                const token = await getAccessToken();
+                const freshAssignments = await getGDAPAssignmentsWithGroupDisplayNames(relationshipId, token, true);
+                const groupNames = freshAssignments
+                    .map((a) => a.accessContainer.displayName)
+                    .filter((name): name is string => !!name && name !== 'Name not found');
+
+                setAssignmentsByRelationshipId((prev) => ({
+                    ...prev,
+                    [relationshipId]: freshAssignments,
+                }));
+                setRelationshipGroupNames((prev) => ({
+                    ...prev,
+                    [relationshipId]: groupNames,
+                }));
+                setAssignmentCounts((prev) => ({
+                    ...prev,
+                    [relationshipId]: freshAssignments.length,
+                }));
+            } catch (err) {
+                console.error('Failed to reload assignments for relationship', relationshipId, err);
+            }
+        },
+        [getAccessToken]
+    );
+
+    const handleSelectRelationship = (rel: DelegatedAdminRelationship | null) => {
+        setSelectedRelationship(rel);
+        setIsAllGroupMatchesSelected(false);
+        setEditingAssignmentId(null);
+    };
+
+    const handleSelectAllGroupMatches = () => {
+        setIsAllGroupMatchesSelected(true);
+        setSelectedRelationship(null);
+        setEditingAssignmentId(null);
+    };
+
+    const handleSelectRelationshipAndAssignment = (rel: DelegatedAdminRelationship, assignmentId?: string) => {
+        setSelectedRelationship(rel);
+        setIsAllGroupMatchesSelected(false);
+        setEditingAssignmentId(assignmentId || null);
+    };
 
     if (!hasCompletedInitialLoad && (isLoading || isPreloading)) {
         return (
@@ -166,30 +272,57 @@ const ManageAssignments: React.FC<ManageAssignmentsProps> = ({ refreshToken = 0,
         );
     }
 
+    const shouldShowGroupOverview = searchMode === 'group' && isAllGroupMatchesSelected && groupSearchTerm.trim().length > 0;
+
     return (
         <div className="bg-white shadow-lg rounded-lg p-4 md:p-6 min-h-[600px]">
             <div className="flex gap-6 min-h-[520px]">
-            <div className="flex-none border-r border-gray-100 pr-4" style={{ minWidth: '400px' }}>
-                <RelationshipList 
-                    relationships={relationships}
-                    selectedRelationshipId={selectedRelationship?.id || null}
-                    onSelectRelationship={setSelectedRelationship}
-                    assignmentCounts={assignmentCounts}
-                    isPreloading={isPreloading}
-                    preloadDone={preloadDone}
-                    preloadTotal={preloadTotal}
-                />
-            </div>
-            <div className="flex-1 min-w-0">
-                <AssignmentEditor 
-                    key={selectedRelationship?.id} 
-                    relationship={selectedRelationship} 
-                    getAccessToken={getAccessToken}
-                    onUpdateRelationship={handleUpdateRelationship}
-                    onAssignmentsLoaded={handleAssignmentsLoaded}
-                    allRelationshipGroupNames={relationshipGroupNames}
-                />
-            </div>
+                <div className="flex-none border-r border-gray-100 pr-4" style={{ minWidth: '400px' }}>
+                    <RelationshipList 
+                        relationships={relationships}
+                        selectedRelationshipId={selectedRelationship?.id || null}
+                        onSelectRelationship={handleSelectRelationship}
+                        assignmentCounts={assignmentCounts}
+                        relationshipGroupNames={relationshipGroupNames}
+                        assignmentsByRelationshipId={assignmentsByRelationshipId}
+                        isPreloading={isPreloading}
+                        preloadDone={preloadDone}
+                        preloadTotal={preloadTotal}
+                        searchMode={searchMode}
+                        onSearchModeChange={setSearchMode}
+                        groupSearchTerm={groupSearchTerm}
+                        onGroupSearchTermChange={setGroupSearchTerm}
+                        onSelectAllGroupMatches={handleSelectAllGroupMatches}
+                        isAllGroupMatchesSelected={isAllGroupMatchesSelected}
+                    />
+                </div>
+                <div className="flex-1 min-w-0">
+                    {shouldShowGroupOverview ? (
+                        <GroupAssignmentsOverview 
+                            searchTerm={groupSearchTerm}
+                            relationships={relationships}
+                            assignmentsByRelationshipId={assignmentsByRelationshipId}
+                            getAccessToken={getAccessToken}
+                            onAssignmentsChanged={refreshRelationshipAssignments}
+                            onSelectRelationshipAndAssignment={handleSelectRelationshipAndAssignment}
+                        />
+                    ) : (
+                        <AssignmentEditor 
+                            key={selectedRelationship?.id} 
+                            relationship={selectedRelationship} 
+                            getAccessToken={getAccessToken}
+                            onUpdateRelationship={handleUpdateRelationship}
+                            onAssignmentsLoaded={handleAssignmentsLoaded}
+                            allRelationshipGroupNames={relationshipGroupNames}
+                            initialEditingAssignmentId={editingAssignmentId}
+                            onBackToGroupOverview={
+                                searchMode === 'group' && groupSearchTerm.trim().length > 0
+                                    ? handleSelectAllGroupMatches
+                                    : undefined
+                            }
+                        />
+                    )}
+                </div>
             </div>
         </div>
     );
