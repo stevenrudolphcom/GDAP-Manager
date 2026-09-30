@@ -18,8 +18,10 @@ declare global {
             saveDefaultRoles: (roleIds: string[]) => Promise<{ success: boolean; error?: string }>;
             resetDefaultRoles: () => Promise<{ success: boolean; error?: string }>;
             loadRolePresets: () => Promise<Record<string, string[]>>;
-            saveRolePreset: (name: string, roleIds: string[]) => Promise<{ success: boolean; presets?: Record<string, string[]>; error?: string }>;
+            saveRolePreset: (name: string, roleIds: string[]) => Promise<{ success: boolean; presets?: Record<string, string[]>; persistedToSource?: boolean; error?: string }>;
             deleteRolePreset: (name: string) => Promise<{ success: boolean; presets?: Record<string, string[]>; error?: string }>;
+            loadRemovedBuiltInTemplates: () => Promise<string[]>;
+            deleteBuiltInTemplate: (name: string) => Promise<{ success: boolean; removedTemplates?: string[]; removedFromAppConfig?: boolean; error?: string }>;
             selectSecurityMatrixCsvExportPath: (defaultFileName: string) => Promise<{ canceled: true } | { canceled: false; filePath: string }>;
             saveSecurityMatrixCsv: (filePath: string, csvContent: string) => Promise<{ success: boolean; filePath?: string; error?: string }>;
         }

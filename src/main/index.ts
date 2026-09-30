@@ -469,6 +469,108 @@ ipcMain.handle('get-account', async () => {
 const defaultsFilePath = path.join(app.getPath('userData'), 'user-default-roles.json');
 const presetsFilePath = path.join(app.getPath('userData'), 'user-role-presets.json');
 
+// Templates are saved directly into src/appConfig.ts (APP_CONFIG.TEMPLATES) so they ship in
+// every future build. Only writable while running unpackaged (npm run dev); packaged apps
+// ship a read-only asar, so writes there only touch the per-user runtime files below.
+const appConfigSourcePath = path.join(app.getAppPath(), 'src', 'appConfig.ts');
+
+const findMatchingBraceIndex = (content: string, openBraceIndex: number): number => {
+  let depth = 0;
+  for (let i = openBraceIndex; i < content.length; i += 1) {
+    if (content[i] === '{') depth += 1;
+    else if (content[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+};
+
+const findTemplatesBraceRange = (content: string): { open: number; close: number } | null => {
+  const markerIdx = content.indexOf('TEMPLATES:');
+  if (markerIdx === -1) return null;
+  const openIdx = content.indexOf('{', markerIdx);
+  if (openIdx === -1) return null;
+  const closeIdx = findMatchingBraceIndex(content, openIdx);
+  if (closeIdx === -1) return null;
+  return { open: openIdx, close: closeIdx };
+};
+
+const escapeSingleQuotedKey = (name: string): string => name.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+// Matches both hand-written bare-identifier keys and our own quoted-string keys.
+const templateExistsInAppConfigSource = (templatesBody: string, name: string): boolean => {
+  const lower = name.toLowerCase();
+  const keyPattern = /(?:^|\n)\s*(?:'([^']+)'|"([^"]+)"|([A-Za-z_$][\w$]*))\s*:\s*\{/g;
+  let match: RegExpExecArray | null;
+  while ((match = keyPattern.exec(templatesBody))) {
+    const key = match[1] ?? match[2] ?? match[3];
+    if (key && key.toLowerCase() === lower) return true;
+  }
+  return false;
+};
+
+const appendTemplateToAppConfigSource = (name: string, roleIds: string[]) => {
+  const content = fs.readFileSync(appConfigSourcePath, 'utf-8');
+  const range = findTemplatesBraceRange(content);
+  if (!range) throw new Error('Could not locate TEMPLATES object in appConfig.ts');
+  const idLines = roleIds.map((id) => `        '${id}',`).join('\n');
+  const entryText = `    '${escapeSingleQuotedKey(name)}': {\n      roleIds: [\n${idLines}\n      ],\n    },`;
+  const before = content.slice(0, range.close).replace(/\s+$/, '');
+  const after = content.slice(range.close); // starts with the TEMPLATES closing '}'
+  fs.writeFileSync(appConfigSourcePath, `${before}\n${entryText}\n  ${after}`, 'utf-8');
+};
+
+// Only removes entries added via appendTemplateToAppConfigSource (quoted-string keys). Hand-written
+// built-in templates use bare identifier keys and are intentionally left untouched here; those are
+// hidden instead via removedBuiltInTemplates.json to avoid risking their inline role-name comments.
+const removeQuotedTemplateFromAppConfigSource = (name: string): boolean => {
+  const content = fs.readFileSync(appConfigSourcePath, 'utf-8');
+  const range = findTemplatesBraceRange(content);
+  if (!range) return false;
+  const body = content.slice(range.open + 1, range.close);
+  const quotedKeyPattern = /(\n\s*)'([^']+)'\s*:\s*\{/g;
+  let match: RegExpExecArray | null;
+  while ((match = quotedKeyPattern.exec(body))) {
+    if (match[2].toLowerCase() !== name.toLowerCase()) continue;
+    const entryOpenBrace = range.open + 1 + match.index + match[0].length - 1;
+    const entryCloseBrace = findMatchingBraceIndex(content, entryOpenBrace);
+    if (entryCloseBrace === -1) return false;
+    let removalEnd = entryCloseBrace + 1;
+    if (content[removalEnd] === ',') removalEnd += 1;
+    const removalStart = range.open + 1 + match.index;
+    fs.writeFileSync(appConfigSourcePath, `${content.slice(0, removalStart)}${content.slice(removalEnd)}`, 'utf-8');
+    return true;
+  }
+  return false;
+};
+
+// Names of built-in templates (src/appConfig.ts) the user permanently removed.
+const removedTemplatesUserPath = path.join(app.getPath('userData'), 'user-removed-templates.json');
+const removedTemplatesSourcePath = path.join(app.getAppPath(), 'src', 'removedBuiltInTemplates.json');
+
+const readRemovedTemplatesUser = (): string[] => {
+  try {
+    if (fs.existsSync(removedTemplatesUserPath)) {
+      return JSON.parse(fs.readFileSync(removedTemplatesUserPath, 'utf-8'));
+    }
+  } catch (error) {
+    console.error('Error reading removed templates file:', error);
+  }
+  return [];
+};
+
+const readRemovedTemplatesSource = (): string[] => {
+  try {
+    if (fs.existsSync(removedTemplatesSourcePath)) {
+      return JSON.parse(fs.readFileSync(removedTemplatesSourcePath, 'utf-8'));
+    }
+  } catch (error) {
+    console.error('Error reading removed templates source file:', error);
+  }
+  return [];
+};
+
 ipcMain.handle('select-security-matrix-csv-export-path', async (_event, defaultFileName: string) => {
   if (!mainWindow) return { canceled: true };
 
@@ -548,15 +650,37 @@ ipcMain.handle('load-role-presets', async () => {
 
 ipcMain.handle('save-role-preset', async (_event, name: string, roleIds: string[]) => {
   try {
+    const trimmedName = name.trim();
+    let persistedToSource = false;
+    let alreadyExisted = false;
+
+    // While running unpackaged, promote brand-new templates directly into appConfig.ts so they
+    // ship in every future build (`npm run build` / `npm run package:*`).
+    if (!app.isPackaged) {
+      const content = fs.readFileSync(appConfigSourcePath, 'utf-8');
+      const range = findTemplatesBraceRange(content);
+      alreadyExisted = range ? templateExistsInAppConfigSource(content.slice(range.open + 1, range.close), trimmedName) : false;
+      if (!alreadyExisted) {
+        appendTemplateToAppConfigSource(trimmedName, roleIds);
+        persistedToSource = true;
+      }
+    }
+
+    // The per-user runtime file only needs to hold customizations of an existing template
+    // (override roles) or, when packaged, a brand-new template that can't reach appConfig.ts.
     let presets: Record<string, string[]> = {};
     if (fs.existsSync(presetsFilePath)) {
       try {
         presets = JSON.parse(fs.readFileSync(presetsFilePath, 'utf-8'));
       } catch {}
     }
-    presets[name.trim()] = roleIds;
+    if (alreadyExisted || app.isPackaged) {
+      presets[trimmedName] = roleIds;
+    } else {
+      delete presets[trimmedName];
+    }
     fs.writeFileSync(presetsFilePath, JSON.stringify(presets, null, 2));
-    return { success: true, presets };
+    return { success: true, presets, persistedToSource };
   } catch (error: any) {
     console.error('Error saving role preset:', error);
     return { success: false, error: error?.message };
@@ -579,3 +703,55 @@ ipcMain.handle('delete-role-preset', async (_event, name: string) => {
     return { success: false, error: error?.message };
   }
 });
+
+ipcMain.handle('load-removed-builtin-templates', async () => {
+  // Source list is already baked into the renderer bundle (REMOVED_BUILT_IN_TEMPLATES);
+  // this only returns the per-machine additions made while the app was packaged.
+  return readRemovedTemplatesUser();
+});
+
+ipcMain.handle('delete-builtin-template', async (_event, name: string) => {
+  try {
+    const trimmedName = name.trim();
+    let removedFromAppConfig = false;
+
+    // Templates we ourselves added (quoted keys) can be fully deleted from appConfig.ts.
+    if (!app.isPackaged) {
+      removedFromAppConfig = removeQuotedTemplateFromAppConfigSource(trimmedName);
+    }
+
+    let userRemoved = readRemovedTemplatesUser();
+    if (!removedFromAppConfig) {
+      // Hand-written built-in template (or packaged build): hide it instead of editing appConfig.ts.
+      if (!app.isPackaged) {
+        const sourceRemoved = readRemovedTemplatesSource();
+        if (!sourceRemoved.some((n) => n.toLowerCase() === trimmedName.toLowerCase())) {
+          sourceRemoved.push(trimmedName);
+          fs.writeFileSync(removedTemplatesSourcePath, `${JSON.stringify(sourceRemoved, null, 2)}\n`, 'utf-8');
+        }
+      }
+      if (!userRemoved.some((n) => n.toLowerCase() === trimmedName.toLowerCase())) {
+        userRemoved = [...userRemoved, trimmedName];
+        fs.writeFileSync(removedTemplatesUserPath, JSON.stringify(userRemoved, null, 2));
+      }
+    }
+
+    // Clean up any leftover customization override for this name either way.
+    let presets: Record<string, string[]> = {};
+    if (fs.existsSync(presetsFilePath)) {
+      try {
+        presets = JSON.parse(fs.readFileSync(presetsFilePath, 'utf-8'));
+      } catch {}
+    }
+    if (trimmedName in presets) {
+      delete presets[trimmedName];
+      fs.writeFileSync(presetsFilePath, JSON.stringify(presets, null, 2));
+    }
+
+    return { success: true, removedTemplates: userRemoved, removedFromAppConfig };
+  } catch (error: any) {
+    console.error('Error removing built-in template:', error);
+    return { success: false, error: error?.message };
+  }
+});
+

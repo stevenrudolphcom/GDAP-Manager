@@ -6,7 +6,7 @@ export const APP_CONFIG = {
   // App version info for display
   ROOT_VERSION: '1.4.0',
   ROOT_AUTHOR: 'Jarno Kurki',
-  SUB_VERSION: '1.6.0',
+  SUB_VERSION: '1.7.0',
   SUB_CONTRIBUTOR: 'Steven Rudolph',
 
   // Azure AD App Registration Details
@@ -138,13 +138,14 @@ export const APP_CONFIG = {
     },
     CSCT_M365_Endpoint: {
       roleIds: [
+        'fe930be7-5e62-47db-91af-98c3a49a38b1', // User Administrator
+        '7698a772-787b-4ac8-901f-60d6b08affd2', // Cloud Device Administrator
         'f2ef992c-3afb-46b9-b7cf-a126ee74c451', // Global Reader
         'fdd7a751-b60b-444a-984c-02652fe8fa1c', // Groups Administrator
         '729827e3-9c14-49f7-bb1b-9608f156bbb8', // Helpdesk Administrator
         '3a2c62db-5318-420d-8d74-23affee5d9d5', // Intune Administrator
         '9f06204d-73c1-4d4c-880a-6edb90606fd8', // Microsoft Entra Joined Device Local Administrator
         '194ae4cb-b126-40b2-bd5b-6091b380977d', // Security Administrator
-        'fe930be7-5e62-47db-91af-98c3a49a38b1', // User Administrator
       ],
     },
     CSCT_AZ_ISB: {
@@ -191,6 +192,7 @@ export const APP_CONFIG = {
         '69091246-20e8-4a56-aa4d-066075b2a7a8', // Teams Administrator
         'baf37b3a-610e-45da-9e62-d9d1e5e8914b', // Teams Communications Administrator
         'f70938a0-fc10-4177-9e90-2178f8765737', // Teams Communications Support Engineer
+        'fcf91098-03e3-41a9-b5ba-6f0ec8188a12', // Teams Communications Support Specialist
         '3d762c5a-1b6c-493f-843e-55a3b42923d4', // Teams Devices Administrator
       ],
     },
@@ -211,7 +213,32 @@ export const APP_CONFIG = {
         'f2ef992c-3afb-46b9-b7cf-a126ee74c451', // Global Reader
         '790c1fb9-7f7d-4f88-86a1-ef1f95c05c1b', // Message Center Reader
         'ac16e43d-7b2d-40e0-ac05-243ff356ab5b', // Message Center Privacy Reader
+        '17315797-102d-40b4-93e0-432062caca18', // Compliance Administrator
+        '4a5d8f65-41da-4de4-8968-e035b65339cf', // Reports Reader
+        '5f2222b1-57c3-48ba-8ad5-d4759f1fde6f', // Security Operator
+        '5d6b6bb7-de71-4623-b4af-96380a352509', // Security Reader
+        '75934031-6c7e-415a-99d7-48dbd49e875e', // Usage Summary Reports Reader
       ],
-    }
+    },
+    'CSCT_AZ_Security': {
+      roleIds: [
+        '88d8e3e3-8f55-4a1e-953a-9b9898b8876b', // Directory Readers
+      ],
+    },
+    'CSCT_AZ_ServerStorage': {
+      roleIds: [
+        '88d8e3e3-8f55-4a1e-953a-9b9898b8876b', // Directory Readers
+      ],
+    },
+    'CSCT_AZ_ServiceDesk': {
+      roleIds: [
+        '88d8e3e3-8f55-4a1e-953a-9b9898b8876b', // Directory Readers
+      ],
+    },
+    'CSCT_AZ_Management': {
+      roleIds: [
+        '88d8e3e3-8f55-4a1e-953a-9b9898b8876b', // Directory Readers
+      ],
+    },
   }
 };

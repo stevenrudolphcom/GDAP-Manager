@@ -1,5 +1,6 @@
 import { UnifiedRole } from './types';
 import { APP_CONFIG } from '../../appConfig';
+import removedBuiltInTemplatesData from '../../removedBuiltInTemplates.json';
 
 /**
  * Comprehensive set of Microsoft Entra built-in roles (subset you listed),
@@ -117,7 +118,8 @@ export const AZURE_AD_ROLES: UnifiedRole[] = [
 export const DEFAULT_ROLE_IDS: string[] = AZURE_AD_ROLES.map((role) => role.id);
 
 /**
- * Group assignment templates from APP_CONFIG.
+ * Group assignment templates from APP_CONFIG. Templates saved via the UI are written directly
+ * into appConfig.ts (see main/index.ts), so they appear here automatically once the app reloads.
  */
 export const GROUP_TEMPLATES = Object.fromEntries(
   Object.entries(APP_CONFIG.TEMPLATES).map(([key, template]) => [
@@ -128,6 +130,12 @@ export const GROUP_TEMPLATES = Object.fromEntries(
     },
   ])
 ) as Record<string, { name: string; groupId?: string; roleIds: string[] }>;
+
+/**
+ * Names of built-in templates the user permanently removed via src/removedBuiltInTemplates.json.
+ * Ships in every build, so a removal made in dev mode stays gone in future packaged EXEs.
+ */
+export const REMOVED_BUILT_IN_TEMPLATES: string[] = removedBuiltInTemplatesData as string[];
 
 export function toUnifiedRoles(roleIds: string[]) {
   return roleIds.map((id) => ({ roleDefinitionId: id }));

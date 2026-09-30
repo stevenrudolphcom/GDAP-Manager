@@ -7,6 +7,12 @@ This app runs with delegated user permissions and needs that the user has Admin 
 PLEASE NOTE: This app is only tested on Windows, but should run and build package on Mac and Linux too, but Mac and Linux has not been tested!
 
 ## Changelog:
+30.9.2026
+- App version 1.7.0.
+- Templates saved via the UI are now written directly into `src/appConfig.ts` (instead of a separate per-user cache file), so custom templates ship with every future build/EXE.
+- Built-in templates can now be permanently removed from the app (✕ button), in addition to the existing revert-to-default option, always behind a confirmation prompt.
+- `Clean-Repo.ps1` now also clears this app's own cached userData outside the repo, plus an opt-in `-IncludeGlobalCaches` switch for the shared Electron/electron-builder download caches.
+
 11.9.2026
 - Updated dependency documentation to the currently installed package-lock versions for app version 1.6.0.
 
@@ -170,3 +176,8 @@ npm run clean:full      # deletes generated artifacts
 ```
 
 This removes only regenerable items: `node_modules/`, `.electron-cache/`, `out/`, `release/` and `*.tsbuildinfo`. Source code, configuration, `package.json` / `package-lock.json` and the helper scripts are kept. Afterwards run `npm install` and then `npm run dev` or `npm run package:win`.
+
+It also clears this app's own cached userData outside the repo (`%APPDATA%\GDAP-Manager` for dev, `%APPDATA%\GDAP Manager` for the packaged app) - MSAL token cache, locally saved role presets/templates and default roles - so no machine-specific state carries over between deployments.
+
+Run `.\Clean-Repo.ps1 -IncludeGlobalCaches` to also wipe the machine-wide Electron/electron-builder download caches (`%LOCALAPPDATA%\electron\Cache`, `%LOCALAPPDATA%\electron-builder\Cache`). These are shared by every Electron project on the machine, so they are opt-in only and not part of `npm run clean:full`.
+

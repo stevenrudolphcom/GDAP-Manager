@@ -10,7 +10,7 @@ import {
     getTenantOnMicrosoftDomain,
     searchSecurityGroups
 } from '../services/graphService';
-import { AZURE_AD_ROLES, GROUP_TEMPLATES, DEFAULT_ROLE_IDS } from '../constants';
+import { AZURE_AD_ROLES, GROUP_TEMPLATES, REMOVED_BUILT_IN_TEMPLATES, DEFAULT_ROLE_IDS } from '../constants';
 import RoleSelector from './RoleSelector';
 import { useDebounce } from '../hooks/useDebounce';
 import SpinnerIcon from './icons/SpinnerIcon';
@@ -144,6 +144,7 @@ export const AssignmentForm: React.FC<{
     const [prefillSelectionApplied, setPrefillSelectionApplied] = useState(!prefillGroupDisplayName);
     const [prefillFallbackTried, setPrefillFallbackTried] = useState(false);
     const [lastCompletedSearchTerm, setLastCompletedSearchTerm] = useState<string | null>(null);
+    const [removedBuiltInTemplates, setRemovedBuiltInTemplates] = useState<string[]>(REMOVED_BUILT_IN_TEMPLATES);
 
     const currentGroupName = selectedGroupDisplayName || existingAssignment?.accessContainer.displayName || groupSearchTerm || '';
 
@@ -160,6 +161,24 @@ export const AssignmentForm: React.FC<{
             }
         };
         void loadPresets();
+        return () => {
+            isMounted = false;
+        };
+    }, []);
+
+    useEffect(() => {
+        let isMounted = true;
+        const loadRemovedTemplates = async () => {
+            try {
+                const userRemoved = await window.electronAPI.loadRemovedBuiltInTemplates();
+                if (isMounted && userRemoved) {
+                    setRemovedBuiltInTemplates((prev) => Array.from(new Set([...prev, ...userRemoved])));
+                }
+            } catch (err) {
+                console.error('Failed to load removed built-in templates:', err);
+            }
+        };
+        void loadRemovedTemplates();
         return () => {
             isMounted = false;
         };
@@ -182,9 +201,11 @@ export const AssignmentForm: React.FC<{
         });
 
         const handledUserKeys = new Set<string>();
+        const removedLower = new Set(removedBuiltInTemplates.map((n) => n.toLowerCase()));
 
-        // 1. Built-in templates (overridden if present in userPresets)
+        // 1. Built-in templates (overridden if present in userPresets), skipping user-removed ones
         Object.entries(GROUP_TEMPLATES).forEach(([builtInKeyLower, template]) => {
+            if (removedLower.has(template.name.toLowerCase())) return;
             const userOverride =
                 lowerUserPresetsMap.get(builtInKeyLower) ||
                 lowerUserPresetsMap.get(template.name.toLowerCase());
@@ -219,7 +240,7 @@ export const AssignmentForm: React.FC<{
         });
 
         return list.sort((a, b) => a.name.localeCompare(b.name, 'de', { sensitivity: 'base' }));
-    }, [userPresets]);
+    }, [userPresets, removedBuiltInTemplates]);
 
     // Find the template that matches the current security group's name
     const matchingTemplateName = useMemo(() => {
@@ -603,7 +624,7 @@ export const AssignmentForm: React.FC<{
                 console.error('Failed to revert template:', err);
             }
         } else if (!template.isBuiltIn) {
-            if (!window.confirm(`Delete preset "${template.name}"?`)) return;
+            if (!window.confirm(`Delete template "${template.name}"? This cannot be undone.`)) return;
 
             try {
                 const res = await window.electronAPI.deleteRolePreset(template.name);
@@ -622,6 +643,33 @@ export const AssignmentForm: React.FC<{
             } catch (err) {
                 console.error('Failed to delete preset:', err);
             }
+        }
+    };
+
+    // Permanently removes a built-in template (src/appConfig.ts) from the app, distinct from
+    // reverting a customization back to its built-in defaults.
+    const handleDeleteBuiltInTemplate = async (templateName: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (
+            !window.confirm(
+                `Remove built-in template "${templateName}" from the app? You can create your own replacement template afterwards. This cannot be undone.`
+            )
+        ) {
+            return;
+        }
+
+        try {
+            const res = await window.electronAPI.deleteBuiltInTemplate(templateName);
+            if (res?.removedTemplates) {
+                setRemovedBuiltInTemplates(res.removedTemplates);
+            } else {
+                setRemovedBuiltInTemplates((prev) => [...prev, templateName]);
+            }
+            if (appliedTemplateName?.toLowerCase() === templateName.toLowerCase()) {
+                setAppliedTemplateName(null);
+            }
+        } catch (err) {
+            console.error('Failed to remove built-in template:', err);
         }
     };
 
@@ -846,6 +894,16 @@ export const AssignmentForm: React.FC<{
                                         }
                                     >
                                         {template.isBuiltIn ? '↺' : '✕'}
+                                    </button>
+                                )}
+                                {template.isBuiltIn && (
+                                    <button
+                                        type="button"
+                                        onClick={(e) => handleDeleteBuiltInTemplate(template.name, e)}
+                                        className="pr-2 pl-0.5 py-1 text-xs text-white/80 hover:text-white transition-colors"
+                                        title={`Permanently remove built-in template "${template.name}" from the app`}
+                                    >
+                                        ✕
                                     </button>
                                 )}
                             </div>

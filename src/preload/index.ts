@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadRolePresets: () => ipcRenderer.invoke('load-role-presets'),
   saveRolePreset: (name: string, roleIds: string[]) => ipcRenderer.invoke('save-role-preset', name, roleIds),
   deleteRolePreset: (name: string) => ipcRenderer.invoke('delete-role-preset', name),
+  loadRemovedBuiltInTemplates: () => ipcRenderer.invoke('load-removed-builtin-templates'),
+  deleteBuiltInTemplate: (name: string) => ipcRenderer.invoke('delete-builtin-template', name),
   selectSecurityMatrixCsvExportPath: (defaultFileName: string) => ipcRenderer.invoke('select-security-matrix-csv-export-path', defaultFileName),
   saveSecurityMatrixCsv: (filePath: string, csvContent: string) => ipcRenderer.invoke('save-security-matrix-csv', filePath, csvContent),
 });
